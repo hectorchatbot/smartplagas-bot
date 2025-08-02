@@ -329,7 +329,7 @@
   {
     "id": 1748914057230,
     "type": "mensaje",
-    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!📩 En breve recibirás tu **cotización personalizada** por WhatsApp.  RESUMEN DE TU SOLICITUD: 👤Nombre: {nombre} 📍 Dirección: {direccion}, {comuna} 📞 Teléfono: {telefono} 📧 Email: {email} 🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.📞 Atención urgente: +56 9 5816 6055.",
+    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📋 SERVICIO SOLICITADO: {servicio_principal} - {tipo_servicio} - {dimension}\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu **cotización personalizada**.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
     "variableName": "",
     "nextId": "",
     "options": []
