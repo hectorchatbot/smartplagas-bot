@@ -8,34 +8,41 @@ app = Flask(__name__)
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-# Diccionario para manejar sesiones (usar base de datos en producción)
+# Diccionario de sesiones (usar DB en producción si es necesario)
 sesiones = {}
 
-# Función para obtener un bloque por ID
+# Obtener bloque por ID
 def obtener_bloque_por_id(bloque_id):
     for bloque in flujo:
         if str(bloque["id"]) == str(bloque_id):
             return bloque
     return None
 
-# Reemplazar variables como {nombre}, {email}, etc.
+# Reemplazar {variables} por valores del usuario
 def reemplazar_variables(texto, data):
     for clave, valor in data.items():
         texto = texto.replace(f"{{{clave}}}", valor)
     return texto
 
-# Ruta webhook para Twilio
+# Mostrar opciones como lista numerada
+def formatear_opciones(opciones):
+    texto = ""
+    for idx, opcion in enumerate(opciones, start=1):
+        texto += f"{idx}. {opcion['text']}\n"
+    return texto
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     sender = request.form.get('From')
     msg = request.form.get('Body').strip()
     respuesta = MessagingResponse()
 
-    # Iniciar sesión si es nuevo o dice "hola"
+    # Nueva sesión o reinicio con "hola"
     if msg.lower() == "hola" or sender not in sesiones:
         sesiones[sender] = {
             "current_id": str(flujo[0]["id"]),
-            "data": {}
+            "data": {},
+            "opciones_actuales": []
         }
 
         current_id = sesiones[sender]["current_id"]
@@ -61,7 +68,8 @@ def webhook():
 
             elif tipo == "condicional":
                 opciones = current_block.get("options", [])
-                texto_opciones = "\n".join([op["text"] for op in opciones])
+                texto_opciones = formatear_opciones(opciones)
+                sesiones[sender]["opciones_actuales"] = opciones
                 respuesta.message(f"{current_block['content']}\n\n{texto_opciones}")
                 break
 
@@ -71,7 +79,7 @@ def webhook():
 
         return str(respuesta)
 
-    # Continuar flujo si ya estaba en sesión
+    # Continuar flujo existente
     current_id = sesiones[sender]["current_id"]
     current_block = obtener_bloque_por_id(current_id)
 
@@ -88,15 +96,28 @@ def webhook():
 
         elif tipo == "condicional":
             opciones = current_block.get("options", [])
-            match = next((op for op in opciones if op["text"].lower() in msg.lower()), None)
+            sesiones[sender]["opciones_actuales"] = opciones
+            match = None
+
+            # Si responde con número
+            if msg.isdigit():
+                idx = int(msg) - 1
+                if 0 <= idx < len(opciones):
+                    match = opciones[idx]
+
+            # Si responde con texto
+            if not match:
+                match = next((op for op in opciones if op["text"].lower() in msg.lower()), None)
+
             if match:
                 sesiones[sender]["current_id"] = str(match["nextId"])
                 current_block = obtener_bloque_por_id(match["nextId"])
             else:
-                respuesta.message("❗ No entendí tu respuesta. Por favor elige una opción válida del menú.")
+                texto_opciones = formatear_opciones(opciones)
+                respuesta.message(f"❗ Opción no válida. Escribe el número o texto exacto:\n\n{texto_opciones}")
                 return str(respuesta)
 
-    # Ejecutar el siguiente bloque
+    # Procesar el siguiente bloque automáticamente
     while current_block:
         tipo = current_block.get("type")
 
@@ -117,7 +138,8 @@ def webhook():
 
         elif tipo == "condicional":
             opciones = current_block.get("options", [])
-            texto_opciones = "\n".join([op["text"] for op in opciones])
+            texto_opciones = formatear_opciones(opciones)
+            sesiones[sender]["opciones_actuales"] = opciones
             respuesta.message(f"{current_block['content']}\n\n{texto_opciones}")
             break
 
