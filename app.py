@@ -8,23 +8,20 @@ app = Flask(__name__)
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-# Diccionario de sesiones (usar DB en producción si es necesario)
+# Diccionario para manejar sesiones (usar base de datos en producción)
 sesiones = {}
 
-# Obtener bloque por ID
 def obtener_bloque_por_id(bloque_id):
     for bloque in flujo:
         if str(bloque["id"]) == str(bloque_id):
             return bloque
     return None
 
-# Reemplazar {variables} por valores del usuario
 def reemplazar_variables(texto, data):
     for clave, valor in data.items():
         texto = texto.replace(f"{{{clave}}}", valor)
     return texto
 
-# Mostrar opciones como lista numerada
 def formatear_opciones(opciones):
     texto = ""
     for idx, opcion in enumerate(opciones, start=1):
@@ -37,7 +34,7 @@ def webhook():
     msg = request.form.get('Body').strip()
     respuesta = MessagingResponse()
 
-    # Nueva sesión o reinicio con "hola"
+    # Nueva sesión
     if msg.lower() == "hola" or sender not in sesiones:
         sesiones[sender] = {
             "current_id": str(flujo[0]["id"]),
@@ -45,44 +42,10 @@ def webhook():
             "opciones_actuales": []
         }
 
-        current_id = sesiones[sender]["current_id"]
-        current_block = obtener_bloque_por_id(current_id)
-
-        while current_block:
-            tipo = current_block.get("type")
-
-            if tipo == "mensaje":
-                content = reemplazar_variables(current_block["content"], sesiones[sender]["data"])
-                respuesta.message(content)
-                if current_block.get("autoAdvance", False):
-                    next_id = current_block.get("nextId")
-                    if next_id:
-                        sesiones[sender]["current_id"] = str(next_id)
-                        current_block = obtener_bloque_por_id(next_id)
-                        continue
-                break
-
-            elif tipo == "pregunta":
-                respuesta.message(current_block["content"])
-                break
-
-            elif tipo == "condicional":
-                opciones = current_block.get("options", [])
-                texto_opciones = formatear_opciones(opciones)
-                sesiones[sender]["opciones_actuales"] = opciones
-                respuesta.message(f"{current_block['content']}\n\n{texto_opciones}")
-                break
-
-            else:
-                respuesta.message("Tipo de bloque no reconocido.")
-                break
-
-        return str(respuesta)
-
-    # Continuar flujo existente
     current_id = sesiones[sender]["current_id"]
     current_block = obtener_bloque_por_id(current_id)
 
+    # Procesar entrada del usuario según tipo de bloque
     if current_block:
         tipo = current_block.get("type")
 
@@ -96,36 +59,31 @@ def webhook():
 
         elif tipo == "condicional":
             opciones = current_block.get("options", [])
-            sesiones[sender]["opciones_actuales"] = opciones
             match = None
 
-            # Si responde con número
             if msg.isdigit():
                 idx = int(msg) - 1
                 if 0 <= idx < len(opciones):
                     match = opciones[idx]
-
-            # Si responde con texto
             if not match:
                 match = next((op for op in opciones if op["text"].lower() in msg.lower()), None)
 
             if match:
-                sesiones[sender]["current_id"] = str(match["nextId"])
                 if "saveAs" in match:
                     sesiones[sender]["data"][match["saveAs"]] = match["text"]
+                sesiones[sender]["current_id"] = str(match["nextId"])
                 current_block = obtener_bloque_por_id(match["nextId"])
             else:
-                texto_opciones = formatear_opciones(opciones)
-                respuesta.message(f"❗ Opción no válida. Escribe el número o texto exacto:\n\n{texto_opciones}")
+                respuesta.message(f"❗ Opción no válida. Escribe el número o texto exacto:\n\n{formatear_opciones(opciones)}")
                 return str(respuesta)
 
-    # Procesar el siguiente bloque automáticamente
+    # Enviar bloques automáticamente
     while current_block:
         tipo = current_block.get("type")
 
         if tipo == "mensaje":
-            content = reemplazar_variables(current_block["content"], sesiones[sender]["data"])
-            respuesta.message(content)
+            contenido = reemplazar_variables(current_block["content"], sesiones[sender]["data"])
+            respuesta.message(contenido)
             if current_block.get("autoAdvance", False):
                 next_id = current_block.get("nextId")
                 if next_id:
@@ -140,8 +98,8 @@ def webhook():
 
         elif tipo == "condicional":
             opciones = current_block.get("options", [])
-            texto_opciones = formatear_opciones(opciones)
             sesiones[sender]["opciones_actuales"] = opciones
+            texto_opciones = formatear_opciones(opciones)
             respuesta.message(f"{current_block['content']}\n\n{texto_opciones}")
             break
 
