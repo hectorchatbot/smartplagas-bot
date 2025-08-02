@@ -7,7 +7,6 @@
     "nextId": "1748909725738",
     "options": [],
     "autoAdvance": true
-
   },
   {
     "id": 1748909725738,
@@ -35,17 +34,17 @@
     "options": [
       {
         "text": "🐜 Control de Plagas",
-        "nextId": "1748910215188"
+        "nextId": "1748910215188",
         "saveAs": "servicio_principal"
       },
       {
         "text": "🏊 Piscinas",
-        "nextId": "1748912457487"
+        "nextId": "1748912457487",
         "saveAs": "servicio_principal"
       },
       {
         "text": "📷 Cámaras Seguridad",
-        "nextId": "1748913058876"
+        "nextId": "1748913058876",
         "saveAs": "servicio_principal"
       }
     ]
@@ -59,39 +58,18 @@
     "options": [
       {
         "text": "🐀 Desratización → ",
-        "nextId": "1748911338220"
+        "nextId": "1748911338220",
         "saveAs": "tipo_servicio"
       },
       {
         "text": "🐜🕷️ Desinsectación ",
-        "nextId": "1748912010712"
+        "nextId": "1748912010712",
         "saveAs": "tipo_servicio"
       },
       {
         "text": "💧 Sanitización ",
-        "nextId": "1748912322554"
+        "nextId": "1748912322554",
         "saveAs": "tipo_servicio"
-      }
-    ]
-  },
-  {
-    "id": 1748911338220,
-    "type": "condicional",
-    "content": "¿Qué servicio de desratización requiere?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Interior",
-        "nextId": "1748911555017"
-      },
-      {
-        "text": "Exterior",
-        "nextId": "1748911555017"
-      },
-      {
-        "text": "Ambas",
-        "nextId": "1748911555017"
       }
     ]
   },
@@ -104,17 +82,17 @@
     "options": [
       {
         "text": "Menos de 100 m2",
-        "nextId": "1748911698499"
+        "nextId": "1748911698499",
         "saveAs": "dimension"
       },
       {
         "text": "De 100 a 200 m2",
-        "nextId": "1748911698499"
+        "nextId": "1748911698499",
         "saveAs": "dimension"
       },
       {
         "text": "Más de 200 m2",
-        "nextId": "1748911698499"
+        "nextId": "1748911698499",
         "saveAs": "dimension"
       }
     ]
@@ -152,193 +130,9 @@
     "options": []
   },
   {
-    "id": 1748912010712,
-    "type": "condicional",
-    "content": "¿Qué servicio de desinsectación requiere?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Interior",
-        "nextId": "1748911555017"
-      },
-      {
-        "text": "Exterior",
-        "nextId": "1748911555017"
-      },
-      {
-        "text": "Ambas",
-        "nextId": "1748911555017"
-      }
-    ]
-  },
-  {
-    "id": 1748912322554,
-    "type": "condicional",
-    "content": "¿Qué servicio de sanitización requiere?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Interior",
-        "nextId": "1748911555017"
-      },
-      {
-        "text": "Exterior",
-        "nextId": "1748911555017"
-      },
-      {
-        "text": "Ambas",
-        "nextId": "1748911555017"
-      }
-    ]
-  },
-  {
-    "id": 1748912457487,
-    "type": "condicional",
-    "content": "¿Qué servicio de piscina requiere?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Tratamiento",
-        "nextId": "1748912789732"
-      },
-      {
-        "text": "Mantención bomba",
-        "nextId": "1748912789732"
-      },
-      {
-        "text": "Cambio arena filtro",
-        "nextId": "1748912789732"
-      }
-    ]
-  },
-  {
-    "id": 1748912789732,
-    "type": "condicional",
-    "content": "Indique que tipo de material es la Piscina",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Baldosa",
-        "nextId": "1748912906346"
-      },
-      {
-        "text": "Concreto",
-        "nextId": "1748912906346"
-      },
-      {
-        "text": "Fibra de vidrio",
-        "nextId": "1748912906346"
-      }
-    ]
-  },
-  {
-    "id": 1748912906346,
-    "type": "pregunta",
-    "content": "Tamaño de la piscina en mts (Largo x Ancho)",
-    "variableName": "",
-    "nextId": "1748911698499",
-    "options": []
-  },
-  {
-    "id": 1748913058876,
-    "type": "condicional",
-    "content": "¿Número de cámaras que desea instalar?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "1 - 2",
-        "nextId": "1748913223390"
-      },
-      {
-        "text": "3 - 5",
-        "nextId": "1748913223390"
-      },
-      {
-        "text": "Más de 5",
-        "nextId": "1748913223390"
-      }
-    ]
-  },
-  {
-    "id": 1748913223390,
-    "type": "condicional",
-    "content": "¿Qué tipo de cámara deseas instalar?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "📡 Alámbricas – Requieren cableado, buena conexión.",
-        "nextId": "1748913354726"
-      },
-      {
-        "text": "📶 Inalámbricas – Se conectan por WiFi.",
-        "nextId": "1748913354726"
-      },
-      {
-        "text": "☀️ Solares – Funcionan con panel solar.",
-        "nextId": "1748913354726"
-      },
-      {
-        "text": "📼 Con grabador DVR (análoga HD) – Sistema clásico con grabación local.",
-        "nextId": "1748913354726"
-      }
-    ]
-  },
-  {
-    "id": 1748913354726,
-    "type": "pregunta",
-    "content": "¿Qué áreas deseas vigilar? (Ej.: Entrada Principal, Estacionamiento, Patio, Interior del Inmueble, Reja o Portón, Bodega)",
-    "variableName": "",
-    "nextId": "1748913446918",
-    "options": []
-  },
-  {
-    "id": 1748913446918,
-    "type": "condicional",
-    "content": "¿Podría tener acceso remoto (desde el celular o computador) una vez instalado el sistema?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Sí ",
-        "nextId": "1748913856796"
-      },
-      {
-        "text": "No",
-        "nextId": "1748913856796"
-      },
-      {
-        "text": "No estoy seguro",
-        "nextId": "1748913856796"
-      }
-    ]
-  },
-  {
-    "id": 1748913856796,
-    "type": "condicional",
-    "content": "¿Cuenta con conexión a internet en el lugar donde se instalarán las cámaras de seguridad?",
-    "variableName": "",
-    "nextId": "",
-    "options": [
-      {
-        "text": "Si",
-        "nextId": "1748911698499"
-      },
-      {
-        "text": "No",
-        "nextId": "1748911698499"
-      }
-    ]
-  },
-  {
     "id": 1748914057230,
     "type": "mensaje",
-    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📋 SERVICIO SOLICITADO: {servicio_principal} - {tipo_servicio} - {dimension}\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055."
+    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📋 SERVICIO SOLICITADO: {servicio_principal} - {tipo_servicio} - {dimension}\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
     "nextId": "",
     "options": []
   }
