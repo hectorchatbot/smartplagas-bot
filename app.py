@@ -111,6 +111,8 @@ def webhook():
 
             if match:
                 sesiones[sender]["current_id"] = str(match["nextId"])
+                if "saveAs" in match:
+                    sesiones[sender]["data"][match["saveAs"]] = match["text"]
                 current_block = obtener_bloque_por_id(match["nextId"])
             else:
                 texto_opciones = formatear_opciones(opciones)
