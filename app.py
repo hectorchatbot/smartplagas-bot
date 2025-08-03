@@ -96,6 +96,7 @@ def webhook():
             if bloque_actual["type"] == "pregunta":
                 respuesta.message(reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"]))
             elif bloque_actual["type"] == "condicional":
+                logging.info(f"➡️ Mostrando condicional: {bloque_actual['content']}")
                 opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
                 respuesta.message(f"{bloque_actual['content']}\n{opciones}")
 
