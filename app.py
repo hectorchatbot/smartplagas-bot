@@ -4,82 +4,70 @@ import json
 
 app = Flask(__name__)
 
-# Cargar flujo desde archivo JSON
+# Cargar flujo desde archivo
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-# Diccionario para manejar sesiones (en producción usar BD)
+# Sesiones temporales (usa base de datos en producción)
 sesiones = {}
 
-# Función para encontrar un bloque por ID
+# Buscar bloque por ID
 def obtener_bloque(bloque_id):
     for bloque in flujo:
-        if bloque["id"] == bloque_id:
+        if bloque['id'] == bloque_id:
             return bloque
     return None
 
-# Función para reemplazar variables como {{nombre}}
-def reemplazar_variables(texto, datos):
-    for clave, valor in datos.items():
-        texto = texto.replace(f"{{{{{clave}}}}}", valor)
-    return texto
+# Procesar siguiente bloque automáticamente
+def avanzar_flujo(sender, respuesta=None):
+    sesion = sesiones[sender]
+    bloque_actual = obtener_bloque(sesion["current_id"])
 
-# Enviar automáticamente bloques tipo 'mensaje'
-def avanzar_automaticamente(sid, resp):
-    while True:
-        bloque = obtener_bloque(sesiones[sid]["current_id"])
-        if bloque["tipo"] == "mensaje":
-            contenido = reemplazar_variables(bloque["contenido"], sesiones[sid]["data"])
-            resp.message(contenido)
-            if "siguiente" in bloque:
-                sesiones[sid]["current_id"] = bloque["siguiente"]
-            else:
-                break
+    # Reemplazo de campos
+    nombre_usuario = sesion["data"].get("nombre", "")
+    
+    # Manejo por tipo de bloque
+    if bloque_actual["tipo"] == "mensaje":
+        contenido = bloque_actual["contenido"].replace("{{nombre}}", nombre_usuario)
+        siguiente_bloque = bloque_actual.get("siguiente")
+        if siguiente_bloque:
+            sesion["current_id"] = siguiente_bloque
+            return [contenido] + avanzar_flujo(sender)
         else:
-            break
+            return [contenido]
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    sender = request.form.get('From')
-    msg = request.form.get('Body').strip()
-    resp = MessagingResponse()
-
-    if sender not in sesiones or msg.lower() == "hola":
-        sesiones[sender] = {
-            "current_id": "inicio",
-            "data": {}
-        }
-
-    avanzar_automaticamente(sender, resp)
-    bloque_actual = obtener_bloque(sesiones[sender]["current_id"])
-
-    if bloque_actual["tipo"] == "pregunta":
-        # Si viene de un bloque con campo para guardar datos
+    elif bloque_actual["tipo"] == "pregunta":
         if "campo" in bloque_actual:
-            sesiones[sender]["data"][bloque_actual["campo"]] = msg
-            if "siguiente" in bloque_actual:
-                sesiones[sender]["current_id"] = bloque_actual["siguiente"]
-                avanzar_automaticamente(sender, resp)
+            if respuesta:
+                sesion["data"][bloque_actual["campo"]] = respuesta
+                sesion["current_id"] = bloque_actual["siguiente"]
+                return avanzar_flujo(sender)
             else:
-                siguiente = flujo[flujo.index(bloque_actual) + 1]["id"]
-                sesiones[sender]["current_id"] = siguiente
-                avanzar_automaticamente(sender, resp)
-
-        # Si es una pregunta con opciones
+                return [bloque_actual["contenido"]]
         elif "opciones" in bloque_actual:
-            if msg in bloque_actual["opciones"]:
-                sesiones[sender]["current_id"] = bloque_actual["opciones"][msg]
-                avanzar_automaticamente(sender, resp)
+            if respuesta in bloque_actual["opciones"]:
+                sesion["current_id"] = bloque_actual["opciones"][respuesta]
+                return avanzar_flujo(sender)
             else:
-                opciones = bloque_actual["contenido"]
-                resp.message(f"Opción no válida. Por favor elige una opción:\n\n{opciones}")
+                return ["Por favor, elige una opción válida:\n" + bloque_actual["contenido"]]
         else:
-            resp.message("Error: bloque 'pregunta' sin 'campo' ni 'opciones'.")
-
-    elif bloque_actual["tipo"] == "mensaje":
-        avanzar_automaticamente(sender, resp)
-
+            return ["Tipo de bloque no reconocido."]
     else:
-        resp.message("Tipo de bloque no reconocido.")
+        return ["Tipo de bloque no reconocido."]
 
-    return str(resp)
+@app.route("/webhook", methods=['POST'])
+def webhook():
+    sender = request.form.get("From")
+    msg = request.form.get("Body").strip()
+    respuesta = MessagingResponse()
+
+    if sender not in sesiones or msg.lower() in ["hola", "empezar"]:
+        sesiones[sender] = {"current_id": "inicio", "data": {}}
+        mensajes = avanzar_flujo(sender)
+    else:
+        mensajes = avanzar_flujo(sender, msg)
+
+    for mensaje in mensajes:
+        respuesta.message(mensaje)
+
+    return str(respuesta)
