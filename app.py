@@ -5,13 +5,14 @@ import logging
 
 app = Flask(__name__)
 
-# Logging básico en consola Railway
+# Configura logging para Railway
 logging.basicConfig(level=logging.INFO)
 
-# Cargar flujo
+# Cargar flujo desde JSON
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
+# Diccionario simple para manejar sesiones
 sesiones = {}
 
 def obtener_bloque_por_id(bloque_id):
@@ -28,7 +29,7 @@ def reemplazar_variables(texto, datos):
 def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
     while bloque_actual and bloque_actual["type"] == "mensaje" and bloque_actual.get("autoAdvance"):
         mensaje = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
-        logging.info(f"Enviando mensaje auto: {mensaje}")
+        logging.info(f"📤 Enviando mensaje automático: {mensaje}")
         respuesta_twilio.message(mensaje)
         siguiente_id = bloque_actual.get("nextId")
         if not siguiente_id:
@@ -39,10 +40,13 @@ def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    print("✅ Webhook alcanzado")  # Paso 1: test visual en Railway
+    logging.info("🟢 Webhook alcanzado desde Twilio")
+
     sender = request.form.get('From')
     msg = request.form.get('Body', '').strip()
 
-    logging.info(f"Mensaje recibido de {sender}: {msg}")
+    logging.info(f"📥 Mensaje recibido de {sender}: {msg}")
 
     respuesta = MessagingResponse()
 
@@ -51,7 +55,7 @@ def webhook():
             "current_id": str(flujo[0]["id"]),
             "data": {}
         }
-        logging.info("Iniciando nueva sesión")
+        logging.info("🔄 Nueva sesión iniciada")
 
     bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
 
