@@ -4,6 +4,8 @@ from twilio.twiml.messaging_response import MessagingResponse
 import json
 import logging
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
