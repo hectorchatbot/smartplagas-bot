@@ -68,7 +68,15 @@ def webhook():
 
         # Procesar tipo condicional
         elif bloque_actual["type"] == "condicional":
-            seleccion = next((op for op in bloque_actual["options"] if op["text"].lower() == msg.lower()), None)
+           # Normaliza y busca por número o texto
+msg_normalizado = msg.lower().strip()
+seleccion = None
+for i, op in enumerate(bloque_actual["options"], 1):
+    opcion_texto = op["text"].lower()
+    if msg_normalizado == str(i) or msg_normalizado in opcion_texto:
+        seleccion = op
+        break
+
             if seleccion:
                 if "saveAs" in seleccion:
                     sesiones[sender]["data"][seleccion["saveAs"]] = seleccion["text"]
