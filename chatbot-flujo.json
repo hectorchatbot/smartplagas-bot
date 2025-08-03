@@ -1,108 +1,139 @@
 [
   {
-    "id": "inicio",
-    "tipo": "mensaje",
-    "contenido": "👋 Hola, bienvenido a SMART PLAGAS.\n¿Cómo te llamas?"
+    "id": 1748909520753,
+    "type": "mensaje",
+    "content": "👋 Hola, bienvenido a SMART PLAGAS.",
+    "variableName": "",
+    "nextId": "1748909725738",
+    "options": [],
+    "autoAdvance": true
   },
   {
-    "id": "nombre",
-    "tipo": "pregunta",
-    "campo": "nombre",
-    "siguiente": "saludo"
+    "id": 1748909725738,
+    "type": "pregunta",
+    "content": "¿Cómo te llamas?",
+    "variableName": "nombre",
+    "nextId": "1748909890368",
+    "options": []
   },
   {
-    "id": "saludo",
-    "tipo": "mensaje",
-    "contenido": "Hola {{nombre}}, encantado de conocerte.",
-    "siguiente": "menu_principal"
+    "id": 1748909890368,
+    "type": "mensaje",
+    "content": "Hola {nombre}, encantado de conocerte.",
+    "variableName": "",
+    "nextId": "1748910006824",
+    "options": [],
+    "autoAdvance": true
   },
   {
-    "id": "menu_principal",
-    "tipo": "pregunta",
-    "contenido": "¿Qué deseas solucionar hoy con Smart Plagas?\n\n1. 🐜 Control de Plagas\n2. 🏊 Piscinas\n3. 📷 Cámaras Seguridad",
-    "opciones": {
-      "1": "control_plagas",
-      "2": "piscinas",
-      "3": "camaras"
-    }
+    "id": 1748910006824,
+    "type": "condicional",
+    "content": "¿Qué deseas solucionar hoy con Smart Plagas?",
+    "variableName": "",
+    "nextId": "",
+    "options": [
+      {
+        "text": "🐜 Control de Plagas",
+        "nextId": "1748910215188",
+        "saveAs": "servicio_principal"
+      },
+      {
+        "text": "🏊 Piscinas",
+        "nextId": "1748912457487",
+        "saveAs": "servicio_principal"
+      },
+      {
+        "text": "📷 Cámaras Seguridad",
+        "nextId": "1748913058876",
+        "saveAs": "servicio_principal"
+      }
+    ]
   },
   {
-    "id": "control_plagas",
-    "tipo": "pregunta",
-    "contenido": "¿En qué servicio de Control de Plagas?\n\n1. 🐀 Desratización\n2. 🐜🕷️ Desinsectación\n3. 💧 Sanitización",
-    "opciones": {
-      "1": "desratizacion",
-      "2": "desinsectacion",
-      "3": "sanitizacion"
-    }
+    "id": 1748910215188,
+    "type": "condicional",
+    "content": "¿En qué servicio de Control de Plagas?",
+    "variableName": "",
+    "nextId": "",
+    "options": [
+      {
+        "text": "🐀 Desratización",
+        "nextId": "1748911338220",
+        "saveAs": "tipo_servicio"
+      },
+      {
+        "text": "🐜🕷️ Desinsectación",
+        "nextId": "1748911555017",
+        "saveAs": "tipo_servicio"
+      },
+      {
+        "text": "💧 Sanitización",
+        "nextId": "1748911555017",
+        "saveAs": "tipo_servicio"
+      }
+    ]
   },
   {
-    "id": "piscinas",
-    "tipo": "mensaje",
-    "contenido": "Has seleccionado Piscinas. Pronto uno de nuestros agentes te contactará."
+    "id": 1748911555017,
+    "type": "condicional",
+    "content": "¿De cuántos metros cuadrados totales es el lugar donde desea los servicios?",
+    "variableName": "",
+    "nextId": "",
+    "options": [
+      {
+        "text": "Menos de 100 m2",
+        "nextId": "1748911698499",
+        "saveAs": "dimension"
+      },
+      {
+        "text": "De 100 a 200 m2",
+        "nextId": "1748911698499",
+        "saveAs": "dimension"
+      },
+      {
+        "text": "Más de 200 m2",
+        "nextId": "1748911698499",
+        "saveAs": "dimension"
+      }
+    ]
   },
   {
-    "id": "camaras",
-    "tipo": "mensaje",
-    "contenido": "Has seleccionado Cámaras de Seguridad. Pronto uno de nuestros agentes te contactará."
+    "id": 1748911698499,
+    "type": "pregunta",
+    "content": "¿Cuál es tu dirección?",
+    "variableName": "direccion",
+    "nextId": "1748911780132",
+    "options": []
   },
   {
-    "id": "desratizacion",
-    "tipo": "pregunta",
-    "contenido": "¿Cuál es el tamaño aproximado del lugar?\n\n1. Menos de 100 m²\n2. De 100 a 200 m²\n3. Más de 200 m²",
-    "opciones": {
-      "1": "direccion",
-      "2": "direccion",
-      "3": "direccion"
-    }
+    "id": 1748911780132,
+    "type": "pregunta",
+    "content": "¿En qué comuna vives?",
+    "variableName": "comuna",
+    "nextId": "1748911861762",
+    "options": []
   },
   {
-    "id": "desinsectacion",
-    "tipo": "pregunta",
-    "contenido": "¿Cuál es el tamaño aproximado del lugar?\n\n1. Menos de 100 m²\n2. De 100 a 200 m²\n3. Más de 200 m²",
-    "opciones": {
-      "1": "direccion",
-      "2": "direccion",
-      "3": "direccion"
-    }
+    "id": 1748911861762,
+    "type": "pregunta",
+    "content": "¿Cuál es tu email?",
+    "variableName": "email",
+    "nextId": "1748911937077",
+    "options": []
   },
   {
-    "id": "sanitizacion",
-    "tipo": "pregunta",
-    "contenido": "¿Cuál es el tamaño aproximado del lugar?\n\n1. Menos de 100 m²\n2. De 100 a 200 m²\n3. Más de 200 m²",
-    "opciones": {
-      "1": "direccion",
-      "2": "direccion",
-      "3": "direccion"
-    }
+    "id": 1748911937077,
+    "type": "pregunta",
+    "content": "¿Tu teléfono de contacto?",
+    "variableName": "telefono",
+    "nextId": "1748914057230",
+    "options": []
   },
   {
-    "id": "direccion",
-    "tipo": "pregunta",
-    "campo": "direccion",
-    "contenido": "📍 Por favor, indícanos la dirección donde se requiere el servicio."
-  },
-  {
-    "id": "comuna",
-    "tipo": "pregunta",
-    "campo": "comuna",
-    "contenido": "🏘️ ¿En qué comuna te encuentras?"
-  },
-  {
-    "id": "email",
-    "tipo": "pregunta",
-    "campo": "email",
-    "contenido": "📧 ¿Cuál es tu correo electrónico?"
-  },
-  {
-    "id": "telefono",
-    "tipo": "pregunta",
-    "campo": "telefono",
-    "contenido": "📱 Por último, ¿cuál es tu número de teléfono?"
-  },
-  {
-    "id": "final",
-    "tipo": "mensaje",
-    "contenido": "✅ ¡Gracias {{nombre}}! Hemos registrado tus datos:\n📍 Dirección: {{direccion}}\n🏘️ Comuna: {{comuna}}\n📧 Email: {{email}}\n📱 Teléfono: {{telefono}}\n\nUno de nuestros agentes te contactará muy pronto."
+    "id": 1748914057230,
+    "type": "mensaje",
+    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📋 SERVICIO SOLICITADO: {servicio_principal} - {tipo_servicio} - {dimension}\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
+    "nextId": "",
+    "options": []
   }
 ]
