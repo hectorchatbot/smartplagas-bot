@@ -4,70 +4,82 @@ import json
 
 app = Flask(__name__)
 
-# Cargar flujo desde archivo
+# Cargar el flujo desde archivo JSON
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-# Sesiones temporales (usa base de datos en producción)
+# Simulación de sesiones (en producción usar DB)
 sesiones = {}
 
-# Buscar bloque por ID
-def obtener_bloque(bloque_id):
+def obtener_bloque_por_id(bloque_id):
     for bloque in flujo:
-        if bloque['id'] == bloque_id:
+        if str(bloque["id"]) == str(bloque_id):
             return bloque
     return None
 
-# Procesar siguiente bloque automáticamente
-def avanzar_flujo(sender, respuesta=None):
-    sesion = sesiones[sender]
-    bloque_actual = obtener_bloque(sesion["current_id"])
+def reemplazar_variables(texto, datos):
+    for clave, valor in datos.items():
+        texto = texto.replace(f"{{{clave}}}", valor)
+    return texto
 
-    # Reemplazo de campos
-    nombre_usuario = sesion["data"].get("nombre", "")
-    
-    # Manejo por tipo de bloque
-    if bloque_actual["tipo"] == "mensaje":
-        contenido = bloque_actual["contenido"].replace("{{nombre}}", nombre_usuario)
-        siguiente_bloque = bloque_actual.get("siguiente")
-        if siguiente_bloque:
-            sesion["current_id"] = siguiente_bloque
-            return [contenido] + avanzar_flujo(sender)
-        else:
-            return [contenido]
+def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
+    while bloque_actual and bloque_actual["type"] == "mensaje" and bloque_actual.get("autoAdvance"):
+        mensaje = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+        respuesta_twilio.message(mensaje)
+        siguiente_id = bloque_actual.get("nextId")
+        if not siguiente_id:
+            break
+        bloque_actual = obtener_bloque_por_id(siguiente_id)
+        sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
+    return bloque_actual
 
-    elif bloque_actual["tipo"] == "pregunta":
-        if "campo" in bloque_actual:
-            if respuesta:
-                sesion["data"][bloque_actual["campo"]] = respuesta
-                sesion["current_id"] = bloque_actual["siguiente"]
-                return avanzar_flujo(sender)
-            else:
-                return [bloque_actual["contenido"]]
-        elif "opciones" in bloque_actual:
-            if respuesta in bloque_actual["opciones"]:
-                sesion["current_id"] = bloque_actual["opciones"][respuesta]
-                return avanzar_flujo(sender)
-            else:
-                return ["Por favor, elige una opción válida:\n" + bloque_actual["contenido"]]
-        else:
-            return ["Tipo de bloque no reconocido."]
-    else:
-        return ["Tipo de bloque no reconocido."]
-
-@app.route("/webhook", methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    sender = request.form.get("From")
-    msg = request.form.get("Body").strip()
+    sender = request.form.get('From')
+    msg = request.form.get('Body', '').strip()
+
     respuesta = MessagingResponse()
 
-    if sender not in sesiones or msg.lower() in ["hola", "empezar"]:
-        sesiones[sender] = {"current_id": "inicio", "data": {}}
-        mensajes = avanzar_flujo(sender)
-    else:
-        mensajes = avanzar_flujo(sender, msg)
+    if sender not in sesiones or msg.lower() == "hola":
+        sesiones[sender] = {
+            "current_id": str(flujo[0]["id"]),
+            "data": {}
+        }
 
-    for mensaje in mensajes:
-        respuesta.message(mensaje)
+    bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
+
+    # Procesar entrada si es pregunta o condicional
+    if bloque_actual["type"] == "pregunta":
+        sesiones[sender]["data"][bloque_actual["variableName"]] = msg
+        siguiente_id = bloque_actual.get("nextId")
+        bloque_actual = obtener_bloque_por_id(siguiente_id)
+        sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
+
+    elif bloque_actual["type"] == "condicional":
+        seleccion = next((op for op in bloque_actual["options"] if op["text"].lower() == msg.lower()), None)
+        if seleccion:
+            if "saveAs" in seleccion:
+                sesiones[sender]["data"][seleccion["saveAs"]] = seleccion["text"]
+            siguiente_id = seleccion["nextId"]
+            bloque_actual = obtener_bloque_por_id(siguiente_id)
+            sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
+        else:
+            opciones = "\n".join([op["text"] for op in bloque_actual["options"]])
+            respuesta.message(f"Por favor, selecciona una opción válida:\n{opciones}")
+            return str(respuesta)
+
+    # Avanzar automáticamente por mensajes
+    bloque_actual = avanzar_automaticamente(sender, bloque_actual, respuesta)
+
+    # Mostrar pregunta o condicional
+    if bloque_actual:
+        if bloque_actual["type"] == "pregunta":
+            respuesta.message(reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"]))
+        elif bloque_actual["type"] == "condicional":
+            opciones = "\n".join([op["text"] for op in bloque_actual["options"]])
+            respuesta.message(f"{bloque_actual['content']}\n{opciones}")
 
     return str(respuesta)
+
+if __name__ == '__main__':
+    app.run(debug=True)
