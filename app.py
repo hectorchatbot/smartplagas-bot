@@ -40,13 +40,10 @@ def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    print("✅ Webhook alcanzado")  # Paso 1: test visual en Railway
-    logging.info("🟢 Webhook alcanzado desde Twilio")
-
+    logging.info(">>> Petición POST recibida en /webhook")
     sender = request.form.get('From')
     msg = request.form.get('Body', '').strip()
-
-    logging.info(f"📥 Mensaje recibido de {sender}: {msg}")
+    logging.info(f">>> Mensaje recibido de {sender}: {msg}")
 
     respuesta = MessagingResponse()
 
@@ -90,4 +87,4 @@ def webhook():
     return str(respuesta)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=8000)
