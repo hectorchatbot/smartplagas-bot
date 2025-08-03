@@ -220,7 +220,6 @@
     "type": "mensaje",
     "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
     "variableName": "",
-    "nextId": "",
     "options": []
   }
 ]
