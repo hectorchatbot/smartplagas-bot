@@ -5,15 +5,13 @@ import logging
 import os
 
 app = Flask(__name__)
-
-# Logging básico para Railway
 logging.basicConfig(level=logging.INFO)
 
 # Cargar flujo JSON
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-# Sesiones en memoria (en producción real usar base de datos)
+# Sesiones en memoria (en producción usar BD si se desea persistencia)
 sesiones = {}
 
 def obtener_bloque_por_id(bloque_id):
@@ -27,14 +25,14 @@ def reemplazar_variables(texto, datos):
         texto = texto.replace(f"{{{clave}}}", valor)
     return texto
 
-def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
-    while bloque_actual and bloque_actual.get("type") == "mensaje" and bloque_actual.get("autoAdvance", True):
-        mensaje = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
-        logging.info(f"[AUTO] Enviando mensaje: {mensaje}")
-        respuesta_twilio.message(mensaje)
+def avanzar_mensajes_automaticos(sender, bloque_actual, respuesta_twilio):
+    while bloque_actual and bloque_actual["type"] == "mensaje":
+        contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+        logging.info(f"[AUTO] Enviando mensaje: {contenido}")
+        respuesta_twilio.message(contenido)
         siguiente_id = bloque_actual.get("nextId")
         if not siguiente_id:
-            break
+            return None
         bloque_actual = obtener_bloque_por_id(siguiente_id)
         sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
     return bloque_actual
@@ -42,14 +40,13 @@ def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        logging.info("🔔 Petición POST recibida en /webhook")
         sender = request.form.get('From')
         msg = request.form.get('Body', '').strip()
         logging.info(f"📩 Mensaje de {sender}: {msg}")
 
         respuesta = MessagingResponse()
 
-        # Iniciar nueva sesión
+        # Nueva sesión o reinicio con "hola"
         if sender not in sesiones or msg.lower() == "hola":
             sesiones[sender] = {
                 "current_id": str(flujo[0]["id"]),
@@ -58,24 +55,28 @@ def webhook():
             logging.info("🆕 Nueva sesión iniciada")
 
         bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
-        if not bloque_actual or "type" not in bloque_actual:
-            raise ValueError("Bloque actual inválido o sin tipo definido")
+        if not bloque_actual:
+            raise Exception("❌ Bloque actual no encontrado")
 
-        # Procesar pregunta
-        if bloque_actual["type"] == "pregunta":
-            sesiones[sender]["data"][bloque_actual["variableName"]] = msg
+        tipo = bloque_actual["type"]
+
+        # Pregunta
+        if tipo == "pregunta":
+            var = bloque_actual.get("variableName")
+            if var:
+                sesiones[sender]["data"][var] = msg
             siguiente_id = bloque_actual.get("nextId")
             bloque_actual = obtener_bloque_por_id(siguiente_id)
             sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
 
-        # Procesar condicional con selección por número o texto
-        elif bloque_actual["type"] == "condicional":
-            msg_normalizado = msg.lower().strip()
+        # Condicional
+        elif tipo == "condicional":
+            msg_normalizado = msg.lower()
             seleccion = None
-            for i, op in enumerate(bloque_actual["options"], 1):
-                opcion_texto = op["text"].lower()
-                if msg_normalizado == str(i) or msg_normalizado in opcion_texto:
-                    seleccion = op
+            for i, opcion in enumerate(bloque_actual["options"], 1):
+                texto_opcion = opcion["text"].lower()
+                if msg_normalizado == str(i) or msg_normalizado in texto_opcion:
+                    seleccion = opcion
                     break
             if seleccion:
                 if "saveAs" in seleccion:
@@ -85,30 +86,31 @@ def webhook():
                 sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
             else:
                 opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
-                respuesta.message(f"⚠️ Opción no válida. Selecciona una de las siguientes:\n{opciones}")
+                respuesta.message(f"⚠️ Opción inválida. Elige una de estas:\n{opciones}")
                 return str(respuesta)
 
-        # Avanzar automáticamente por mensajes tipo 'mensaje'
-        bloque_actual = avanzar_automaticamente(sender, bloque_actual, respuesta)
+        # Avanzar mensajes automáticos
+        bloque_actual = avanzar_mensajes_automaticos(sender, bloque_actual, respuesta)
 
-        # Mostrar pregunta o condicional
+        # Mostrar pregunta o condicional siguiente
         if bloque_actual:
-            if bloque_actual["type"] == "pregunta":
-                respuesta.message(reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"]))
-            elif bloque_actual["type"] == "condicional":
-                logging.info(f"➡️ Mostrando condicional: {bloque_actual['content']}")
+            tipo = bloque_actual["type"]
+            if tipo == "pregunta":
+                contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+                respuesta.message(contenido)
+            elif tipo == "condicional":
                 opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
                 respuesta.message(f"{bloque_actual['content']}\n{opciones}")
 
         return str(respuesta)
 
     except Exception as e:
-        logging.exception("❌ Error inesperado en /webhook:")
+        logging.exception("❌ Error inesperado:")
         respuesta = MessagingResponse()
-        respuesta.message("⚠️ Ocurrió un error al procesar tu mensaje. Por favor intenta nuevamente más tarde.")
+        respuesta.message("⚠️ Ha ocurrido un error. Intenta nuevamente.")
         return str(respuesta)
 
-# Puerto y host para Railway
+# Config Railway
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
     app.run(host='0.0.0.0', port=port)
