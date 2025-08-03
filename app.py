@@ -1,6 +1,6 @@
-
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
 import json
 import logging
 import os
@@ -37,6 +37,33 @@ def avanzar_mensajes_automaticos(sender, bloque_actual, respuesta_twilio):
         bloque_actual = obtener_bloque_por_id(siguiente_id)
         sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
     return bloque_actual
+
+def enviar_resumen_por_whatsapp(data_cliente):
+    try:
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM")
+        to_whatsapp = os.getenv("NOTIFICACION_TELEFONO")
+
+        client = Client(account_sid, auth_token)
+
+        mensaje = f"""🟢 NUEVO CLIENTE SMART PLAGAS
+
+📛 Nombre: {data_cliente.get('nombre', '')}
+🏠 Dirección: {data_cliente.get('direccion', '')}
+🏙️ Comuna: {data_cliente.get('comuna', '')}
+📞 Teléfono: {data_cliente.get('telefono', '')}
+✉️ Email: {data_cliente.get('email', '')}
+"""
+
+        client.messages.create(
+            body=mensaje,
+            from_=from_whatsapp,
+            to=to_whatsapp
+        )
+
+    except Exception as e:
+        logging.error(f"❌ Error al enviar resumen por WhatsApp: {e}")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -84,7 +111,7 @@ def webhook():
                 sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
             else:
                 opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
-                respuesta.message(f"Opcion invalida. Elige una de estas:\n{opciones}")
+                respuesta.message(f"Opción inválida. Elige una de estas:\n{opciones}")
                 return str(respuesta)
 
         bloque_actual = avanzar_mensajes_automaticos(sender, bloque_actual, respuesta)
@@ -98,57 +125,13 @@ def webhook():
                 opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
                 respuesta.message(f"{bloque_actual['content']}\n{opciones}")
         else:
-            nombre = sesiones[sender]["data"].get("nombre", "N/D")
-            direccion = sesiones[sender]["data"].get("direccion", "N/D")
-            comuna = sesiones[sender]["data"].get("comuna", "N/D")
-            email = sesiones[sender]["data"].get("email", "N/D")
-            telefono = sesiones[sender]["data"].get("telefono", "N/D")
-
-            resumen = f"""NUEVO CLIENTE - SMART PLAGAS
-
-Nombre: {nombre}
-Direccion: {direccion}, {comuna}
-Email: {email}
-Telefono: {telefono}
-"""
-
-            from twilio.rest import Client
-            account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-            auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-            whatsapp_from = os.environ.get("TWILIO_WHATSAPP_FROM")
-            whatsapp_admin = "whatsapp:+56958166055"
-
-            client = Client(account_sid, auth_token)
-            client.messages.create(
-                from_=whatsapp_from,
-                to=whatsapp_admin,
-                body=resumen
-            )
-
-            import smtplib
-            from email.message import EmailMessage
-
-            EMAIL_FROM = os.environ.get("EMAIL_FROM")
-            EMAIL_PASS = os.environ.get("EMAIL_PASS")
-            EMAIL_TO = "tucorreo@dominio.cl"
-
-            try:
-                msg = EmailMessage()
-                msg["Subject"] = "Nuevo Cliente - Smart Plagas"
-                msg["From"] = EMAIL_FROM
-                msg["To"] = EMAIL_TO
-                msg.set_content(resumen)
-
-                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-                    smtp.login(EMAIL_FROM, EMAIL_PASS)
-                    smtp.send_message(msg)
-            except Exception as correo_error:
-                logging.error(f"Error al enviar correo: {correo_error}")
+            # El flujo terminó, enviar resumen por WhatsApp
+            enviar_resumen_por_whatsapp(sesiones[sender]["data"])
 
         return str(respuesta)
 
     except Exception as e:
-        logging.exception("Error inesperado:")
+        logging.exception("❌ Error inesperado:")
         respuesta = MessagingResponse()
         respuesta.message("Ha ocurrido un error. Intenta nuevamente.")
         return str(respuesta)
