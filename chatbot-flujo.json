@@ -33,17 +33,17 @@
     "nextId": "",
     "options": [
       {
-        "text": "🐜 Control de Plagas",
+        "text": "1. 🐜 Control de Plagas",
         "nextId": "1748910215188",
         "saveAs": "servicio_principal"
       },
       {
-        "text": "🏊 Piscinas",
+        "text": "2. 🏊 Piscinas",
         "nextId": "1748912457487",
         "saveAs": "servicio_principal"
       },
       {
-        "text": "📷 Cámaras Seguridad",
+        "text": "3. 📷 Cámaras Seguridad",
         "nextId": "1748913058876",
         "saveAs": "servicio_principal"
       }
@@ -57,17 +57,17 @@
     "nextId": "1748910378885",
     "options": [
       {
-        "text": "🐀 Desratización → ",
+        "text": "1. 🐀 Desratización",
         "nextId": "1748911338220",
         "saveAs": "tipo_servicio"
       },
       {
-        "text": "🐜🕷️ Desinsectación ",
+        "text": "2. 🐜🕷️ Desinsectación",
         "nextId": "1748911555017",
         "saveAs": "tipo_servicio"
       },
       {
-        "text": "💧 Sanitización ",
+        "text": "3. 💧 Sanitización",
         "nextId": "1748911555017",
         "saveAs": "tipo_servicio"
       }
@@ -76,22 +76,22 @@
   {
     "id": 1748911555017,
     "type": "condicional",
-    "content": "¿De cuantos metros cuadrados totales es el lugar donde desea los servicios?",
+    "content": "¿De cuántos metros cuadrados totales es el lugar donde desea los servicios?",
     "variableName": "",
     "nextId": "",
     "options": [
       {
-        "text": "Menos de 100 m2",
+        "text": "1. Menos de 100 m2",
         "nextId": "1748911698499",
         "saveAs": "dimension"
       },
       {
-        "text": "De 100 a 200 m2",
+        "text": "2. De 100 a 200 m2",
         "nextId": "1748911698499",
         "saveAs": "dimension"
       },
       {
-        "text": "Más de 200 m2",
+        "text": "3. Más de 200 m2",
         "nextId": "1748911698499",
         "saveAs": "dimension"
       }
