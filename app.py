@@ -1,14 +1,17 @@
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import json
+import logging
 
 app = Flask(__name__)
 
-# Cargar el flujo desde archivo JSON
+# Logging básico en consola Railway
+logging.basicConfig(level=logging.INFO)
+
+# Cargar flujo
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-# Simulación de sesiones (en producción usar DB)
 sesiones = {}
 
 def obtener_bloque_por_id(bloque_id):
@@ -25,6 +28,7 @@ def reemplazar_variables(texto, datos):
 def avanzar_automaticamente(sender, bloque_actual, respuesta_twilio):
     while bloque_actual and bloque_actual["type"] == "mensaje" and bloque_actual.get("autoAdvance"):
         mensaje = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+        logging.info(f"Enviando mensaje auto: {mensaje}")
         respuesta_twilio.message(mensaje)
         siguiente_id = bloque_actual.get("nextId")
         if not siguiente_id:
@@ -38,6 +42,8 @@ def webhook():
     sender = request.form.get('From')
     msg = request.form.get('Body', '').strip()
 
+    logging.info(f"Mensaje recibido de {sender}: {msg}")
+
     respuesta = MessagingResponse()
 
     if sender not in sesiones or msg.lower() == "hola":
@@ -45,10 +51,10 @@ def webhook():
             "current_id": str(flujo[0]["id"]),
             "data": {}
         }
+        logging.info("Iniciando nueva sesión")
 
     bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
 
-    # Procesar entrada si es pregunta o condicional
     if bloque_actual["type"] == "pregunta":
         sesiones[sender]["data"][bloque_actual["variableName"]] = msg
         siguiente_id = bloque_actual.get("nextId")
@@ -68,10 +74,8 @@ def webhook():
             respuesta.message(f"Por favor, selecciona una opción válida:\n{opciones}")
             return str(respuesta)
 
-    # Avanzar automáticamente por mensajes
     bloque_actual = avanzar_automaticamente(sender, bloque_actual, respuesta)
 
-    # Mostrar pregunta o condicional
     if bloque_actual:
         if bloque_actual["type"] == "pregunta":
             respuesta.message(reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"]))
