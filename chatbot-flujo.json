@@ -210,8 +210,7 @@
     { "text": "2️⃣ Empresa", "nextId": "1748911861762", "saveAs": "tipo_cliente" },
     { "text": "3️⃣ Condominio", "nextId": "1748911861762", "saveAs": "tipo_cliente" }
   ]
-}
-
+},
   {
     "id": 1748911861762,
     "type": "pregunta",
@@ -235,8 +234,7 @@
   "variableName": "detalles",
   "nextId": "1748914057230",
   "options": []
-}
-
+},
   {
     "id": 1748914057230,
     "type": "mensaje",
