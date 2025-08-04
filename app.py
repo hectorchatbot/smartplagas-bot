@@ -54,6 +54,19 @@ def enviar_resumen_por_whatsapp(data_cliente):
 🏙️ Comuna: {data_cliente.get('comuna', '')}
 📞 Teléfono: {data_cliente.get('telefono', '')}
 ✉️ Email: {data_cliente.get('email', '')}
+🏷️ Tipo de cliente: {data_cliente.get('tipo_cliente', 'No indicado')}
+🛠️ Servicio solicitado: {data_cliente.get('servicio', 'No indicado')}
+🔧 Subservicio: {data_cliente.get('subservicio', 'No indicado')}
+📍 Área requerida: {data_cliente.get('subarea', '')}
+📐 Metros cuadrados: {data_cliente.get('cantidad_metros cuadrados', '')}
+🏊 Tamaño piscina: {data_cliente.get('tamano_piscina', '')}
+🔩 Material piscina: {data_cliente.get('tipo_material', '')}
+🎥 Cantidad cámaras: {data_cliente.get('cantidad_camara', '')}
+📷 Tipo de cámara: {data_cliente.get('tipo_camara', '')}
+📡 Área a vigilar: {data_cliente.get('¿Qué áreas deseas vigilar?', '')}
+📲 Acceso remoto: {data_cliente.get('¿Podrías tener acceso remoto desde celular o PC una vez instalado el sistema?', '')}
+🌐 Conexión a internet: {data_cliente.get('¿Cuenta con conexión a internet en el lugar de instalación?', '')}
+📝 Observaciones: {data_cliente.get('detalles', 'No hay detalles adicionales')}
 """
 
         client.messages.create(
