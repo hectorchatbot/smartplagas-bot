@@ -88,30 +88,31 @@ def webhook():
         respuesta = MessagingResponse()
 
         if sender not in sesiones:
-    sesiones[sender] = {
-        "current_id": str(flujo[0]["id"]),
-        "data": {}
-    }
-    logging.info("Nueva sesión iniciada")
+            sesiones[sender] = {
+                "current_id": str(flujo[0]["id"]),
+                "data": {}
+            }
+            logging.info("Nueva sesión iniciada")
 
-    # Obtener el primer bloque y enviar mensajes automáticos inmediatamente
-    bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
-    if not bloque_actual:
-        raise Exception("Primer bloque no encontrado")
+            # Obtener el primer bloque y enviar mensajes automáticos inmediatamente
+            bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
+            if not bloque_actual:
+                raise Exception("Primer bloque no encontrado")
 
-    bloque_actual = avanzar_mensajes_automaticos(sender, bloque_actual, respuesta)
+            bloque_actual = avanzar_mensajes_automaticos(sender, bloque_actual, respuesta)
 
-    if bloque_actual:
-        tipo = bloque_actual["type"]
-        if tipo == "pregunta":
-            contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
-            respuesta.message(contenido)
-        elif tipo == "condicional":
-            opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
-            respuesta.message(f"{bloque_actual['content']}\n{opciones}")
+            if bloque_actual:
+                tipo = bloque_actual["type"]
+                if tipo == "pregunta":
+                    contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+                    respuesta.message(contenido)
+                elif tipo == "condicional":
+                    opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
+                    respuesta.message(f"{bloque_actual['content']}\n{opciones}")
 
-    return str(respuesta)
+            return str(respuesta)
 
+        # Continuación de flujo si ya existía sesión
         bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
         if not bloque_actual:
             raise Exception("Bloque actual no encontrado")
