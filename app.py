@@ -110,7 +110,7 @@ def webhook():
             opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
             respuesta.message(f"{bloque_actual['content']}\n{opciones}")
 
-    return str(respuesta)  # << IMPORTANTE: cortar aquí para evitar doble envío
+    return str(respuesta)
 
         bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
         if not bloque_actual:
