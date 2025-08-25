@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
@@ -5,45 +6,71 @@ import json
 import logging
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
+# --- Cargar flujo ---
 with open('chatbot-flujo.json', 'r', encoding='utf-8') as f:
     flujo = json.load(f)
 
-sesiones = {}
+sesiones = {}  # { sender: {"current_id": str, "data": dict} }
 
+# --- Rutas de verificación (health) ---
+@app.route("/", methods=["GET"])
+def index():
+    return "ok", 200
+
+@app.route("/health", methods=["GET"])
+@app.route("/salud", methods=["GET"])
+def health():
+    return "ok", 200
+
+# --- Utilidades ---
 def obtener_bloque_por_id(bloque_id):
     for bloque in flujo:
-        if str(bloque["id"]) == str(bloque_id):
+        if str(bloque.get("id")) == str(bloque_id):
             return bloque
     return None
 
 def reemplazar_variables(texto, datos):
-    for clave, valor in datos.items():
-        texto = texto.replace(f"{{{clave}}}", valor)
+    texto = str(texto or "")
+    for clave, valor in (datos or {}).items():
+        texto = texto.replace(f"{{{clave}}}", str(valor or ""))
     return texto
 
 def avanzar_mensajes_automaticos(sender, bloque_actual, respuesta_twilio):
-    while bloque_actual and bloque_actual["type"] == "mensaje":
-        contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+    """
+    Envía en cadena todos los bloques tipo 'mensaje' y devuelve el siguiente
+    bloque que requiera interacción ('pregunta' o 'condicional').
+    """
+    while bloque_actual and bloque_actual.get("type") == "mensaje":
+        contenido = reemplazar_variables(bloque_actual.get("content", ""), sesiones[sender]["data"])
         logging.info(f"[AUTO] Enviando mensaje: {contenido}")
         respuesta_twilio.message(contenido)
+
         siguiente_id = bloque_actual.get("nextId")
         if not siguiente_id:
+            sesiones[sender]["current_id"] = None
             return None
+
         bloque_actual = obtener_bloque_por_id(siguiente_id)
         sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
+
     return bloque_actual
 
 def enviar_resumen_por_whatsapp(data_cliente):
     try:
-        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-        from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM")
-        to_whatsapp = os.getenv("NOTIFICACION_TELEFONO")
+        account_sid   = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token    = os.getenv("TWILIO_AUTH_TOKEN")
+        from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM")   # ej: whatsapp:+56958166055
+        to_whatsapp   = os.getenv("NOTIFICACION_TELEFONO")  # ej: whatsapp:+569XXXXXXXX
+
+        if not all([account_sid, auth_token, from_whatsapp, to_whatsapp]):
+            logging.error("Faltan variables de entorno para enviar el resumen por WhatsApp.")
+            return
 
         client = Client(account_sid, auth_token)
 
@@ -68,56 +95,52 @@ def enviar_resumen_por_whatsapp(data_cliente):
 🌐 Conexión a internet: {data_cliente.get('¿Cuenta con conexión a internet en el lugar de instalación?', '')}
 📝 Observaciones: {data_cliente.get('detalles', 'No hay detalles adicionales')}
 """
-
-        client.messages.create(
-            body=mensaje,
-            from_=from_whatsapp,
-            to=to_whatsapp
-        )
+        client.messages.create(body=mensaje, from_=from_whatsapp, to=to_whatsapp)
 
     except Exception as e:
         logging.error(f"❌ Error al enviar resumen por WhatsApp: {e}")
 
+# --- Webhook principal ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        sender = request.form.get('From')
-        msg = request.form.get('Body', '').strip()
+        sender = request.form.get('From')            # whatsapp:+569...
+        msg    = (request.form.get('Body') or '').strip()
         logging.info(f"Mensaje de {sender}: {msg}")
 
         respuesta = MessagingResponse()
 
+        # Nueva sesión
         if sender not in sesiones:
-            sesiones[sender] = {
-                "current_id": str(flujo[0]["id"]),
-                "data": {}
-            }
+            sesiones[sender] = {"current_id": str(flujo[0]["id"]), "data": {}}
             logging.info("Nueva sesión iniciada")
 
-            # Obtener el primer bloque y enviar mensajes automáticos inmediatamente
             bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
             if not bloque_actual:
-                raise Exception("Primer bloque no encontrado")
+                respuesta.message("No encuentro el flujo inicial. Intenta más tarde.")
+                return str(respuesta), 200
 
             bloque_actual = avanzar_mensajes_automaticos(sender, bloque_actual, respuesta)
 
             if bloque_actual:
-                tipo = bloque_actual["type"]
+                tipo = bloque_actual.get("type")
                 if tipo == "pregunta":
-                    contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+                    contenido = reemplazar_variables(bloque_actual.get("content", ""), sesiones[sender]["data"])
                     respuesta.message(contenido)
                 elif tipo == "condicional":
-                    opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
-                    respuesta.message(f"{bloque_actual['content']}\n{opciones}")
+                    opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual.get("options", []))])
+                    respuesta.message(f"{bloque_actual.get('content', '')}\n{opciones}")
 
-            return str(respuesta)
+            return str(respuesta), 200
 
-        # Continuación de flujo si ya existía sesión
+        # Continuación de flujo
         bloque_actual = obtener_bloque_por_id(sesiones[sender]["current_id"])
         if not bloque_actual:
-            raise Exception("Bloque actual no encontrado")
+            respuesta.message("He reiniciado tu sesión. Escribe 'hola' para comenzar.")
+            sesiones.pop(sender, None)
+            return str(respuesta), 200
 
-        tipo = bloque_actual["type"]
+        tipo = bloque_actual.get("type")
 
         if tipo == "pregunta":
             var = bloque_actual.get("variableName")
@@ -130,7 +153,7 @@ def webhook():
         elif tipo == "condicional":
             msg_normalizado = msg.lower()
             seleccion = None
-            for i, opcion in enumerate(bloque_actual["options"], 1):
+            for i, opcion in enumerate(bloque_actual.get("options", []), 1):
                 texto_opcion = opcion["text"].lower()
                 if msg_normalizado == str(i) or msg_normalizado in texto_opcion:
                     seleccion = opcion
@@ -142,31 +165,34 @@ def webhook():
                 bloque_actual = obtener_bloque_por_id(siguiente_id)
                 sesiones[sender]["current_id"] = str(bloque_actual["id"]) if bloque_actual else None
             else:
-                opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
+                opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual.get("options", []))])
                 respuesta.message(f"Opción inválida. Elige una de estas:\n{opciones}")
-                return str(respuesta)
+                return str(respuesta), 200
 
+        # Avanza mensajes automáticos y siguiente interacción
         bloque_actual = avanzar_mensajes_automaticos(sender, bloque_actual, respuesta)
 
         if bloque_actual:
-            tipo = bloque_actual["type"]
+            tipo = bloque_actual.get("type")
             if tipo == "pregunta":
-                contenido = reemplazar_variables(bloque_actual["content"], sesiones[sender]["data"])
+                contenido = reemplazar_variables(bloque_actual.get("content", ""), sesiones[sender]["data"])
                 respuesta.message(contenido)
             elif tipo == "condicional":
-                opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual["options"])])
-                respuesta.message(f"{bloque_actual['content']}\n{opciones}")
+                opciones = "\n".join([f"{i+1}. {op['text']}" for i, op in enumerate(bloque_actual.get("options", []))])
+                respuesta.message(f"{bloque_actual.get('content', '')}\n{opciones}")
         else:
-            # El flujo terminó, enviar resumen por WhatsApp
+            # Flujo terminó
             enviar_resumen_por_whatsapp(sesiones[sender]["data"])
+            respuesta.message("✅ ¡Gracias! Recibimos tu solicitud. En breve te enviaremos tu cotización.")
+            sesiones.pop(sender, None)
 
-        return str(respuesta)
+        return str(respuesta), 200
 
     except Exception as e:
         logging.exception("❌ Error inesperado:")
         respuesta = MessagingResponse()
         respuesta.message("Ha ocurrido un error. Intenta nuevamente.")
-        return str(respuesta)
+        return str(respuesta), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8000))
