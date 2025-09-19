@@ -1,13 +1,12 @@
-Flask==3.1.1
-gunicorn==23.0.0
-openai==1.9.0
-aiohttp==3.12.1
-aiohttp-retry==2.9.1 
-certifi==2025.7.14 
-itsdangerous==2.2.0 
-jinja2==3.1.6 
-Werkzeug>=3.1.0
-twilio==8.10.0
+Flask>=3.0
 python-dotenv
+twilio>=9
+docxtpl>=0.16
+Jinja2>=3
+lxml>=4.9
+gunicorn>=21
+
+# Solo en Windows o macOS (para desarrollo local con Word)
+docx2pdf; sys_platform == "win32" or sys_platform == "darwin"
 
 
