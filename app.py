@@ -467,7 +467,7 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
     while True:
         node = FLOW_INDEX.get(str(sess["node_id"]))
         if not node:
-            _reply(resp, ⚠️ No pude continuar el flujo. Escribe *reiniciar*.")
+            _reply(resp, "Advertencia: No pude continuar el flujo. Escribe *reiniciar*.")
             return "stop"
 
         ntype   = node.get("type")
@@ -600,7 +600,7 @@ def webhook():
     except Exception:
         logging.exception("❌ Error en webhook")
         resp = MessagingResponse()
-        resp.message(⚠️ Lo siento, ocurrió un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
+        resp.message("Lo siento, ocurrió un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
 # ----------------------------------
