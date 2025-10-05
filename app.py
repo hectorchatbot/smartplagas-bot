@@ -76,9 +76,13 @@ PRECIOS = {
 def _fmt_money_clp(value: int) -> str:
     return f"${value:,}".replace(",", ".")
 
+# ---------------------------------------------------------------------
+# Utils
+# ---------------------------------------------------------------------
 def _strip_accents_and_symbols(text: str) -> str:
     t = text or ""
-    t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)  # quita emojis/números circ.
+    # quita emojis/números circ.
+    t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)
     t = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
     return re.sub(r"[^a-zA-Z0-9\s]", " ", t).lower().strip()
 
@@ -98,9 +102,6 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
             return int(tabla[idx])
     return int(tabla[-1])
 
-# ---------------------------------------------------------------------
-# Utilidades varias
-# ---------------------------------------------------------------------
 def _safe(x):
     if x is None: return ""
     if isinstance(x, (list, tuple)):
@@ -226,7 +227,7 @@ def send_whatsapp_media_only_pdf(to_wa: str, caption: str, pdf_url: str, delay: 
     return result
 
 # ---------------------------------------------------------------------
-# Normalización para integraciones externas
+# Normalización para integraciones externas (/gen-cotizacion)
 # ---------------------------------------------------------------------
 def normalize_payload(data: dict) -> dict:
     data = data or {}
@@ -287,7 +288,7 @@ def _read_payload_any():
     return {}
 
 # ---------------------------------------------------------------------
-# Generación de cotización (usada por /gen-cotizacion y el flujo)
+# Generación de cotización (usada por /gen-cotizacion y por flujo)
 # ---------------------------------------------------------------------
 def handle_generate():
     payload = _read_payload_any()
@@ -322,21 +323,17 @@ def handle_generate():
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
 
     total = _fmt_money_clp(precio_por_tramo(info["servicio_precio"], info["m2"]))
-    partes = [
-        "✅ *Nueva solicitud recibida*\n",
-        f"*Servicio:* {info['servicio_label']}\n",
-        f"*Cliente:* {info['cliente']}\n",
-        f"*Metros²:* {info['m2']}\n",
-        f"*Ubicación:* {info['direccion']}\n",
-    ]
-    if info.get("comuna"):
-        partes.append(f"*Comuna:* {info['comuna']}\n")
-    partes.extend([
-        f"*Detalles:* {info.get('detalles','')}\n",
-        f"*Contacto:* {info['contacto']} | {info['email']}\n",
+    resumen = (
+        "✅ *Nueva solicitud recibida*\n"
+        f"*Servicio:* {info['servicio_label']}\n"
+        f"*Cliente:* {info['cliente']}\n"
+        f"*Metros²:* {info['m2']}\n"
+        f"*Ubicación:* {info['direccion']}\n"
+        f"*Comuna:* {info.get('comuna','')}\n"
+        f"*Detalles:* {info.get('detalles','')}\n"
+        f"*Contacto:* {info['contacto']} | {info['email']}\n"
         f"*Total:* {total}"
-    ])
-    resumen = "".join(partes)
+    )
 
     sids = {}
     if info["to_whatsapp"] and SEND_PDF:
@@ -417,9 +414,17 @@ def _load_flow():
         for node in FLOW:
             FLOW_INDEX[str(node.get("id"))] = node
         FIRST_NODE_ID = str(FLOW[0]["id"]) if FLOW else None
+    logging.info("Flujo cargado: %s nodos. first=%s", len(FLOW), FIRST_NODE_ID)
+
 _load_flow()
 
-SESSIONS = {}  # { from_wa : {"node_id":..., "data": {...}, ... } }
+@app.post("/reload-flow")
+def reload_flow():
+    _load_flow()
+    return jsonify(ok=True, count=len(FLOW), first=FIRST_NODE_ID)
+
+# Sesiones en memoria: { from_wa : {"node_id":..., "data": {...}, ... } }
+SESSIONS = {}
 
 def _render_template_text(text: str, data: dict) -> str:
     def repl(m):
@@ -438,9 +443,16 @@ def _present_options(node):
     return "\n".join(lines)
 
 def _clean_option_text(t: str) -> str:
-    t = t.strip()
-    t = re.sub(r"^[0-9\W_]+", "", t).strip()
-    return t
+    t = t or ""
+    # quita prefijos como "1️⃣", "2)", "1.", etc
+    t = re.sub(r"^\s*([0-9]+)[\s\.\)\-:_]*", "", t)
+    t = re.sub(r"[\u2460-\u24FF\ufe0f\u200d]", "", t)  # emojis numerales
+    return t.strip().lower()
+
+def _digits_from_text(t: str) -> str:
+    # extrae "1" de "1️⃣", "1.", "1)"...
+    d = re.sub(r"\D", "", t or "")
+    return d[:1] if d else ""
 
 def _rango_to_m2(r: str) -> float:
     s = _strip_accents_and_symbols(r)
@@ -484,7 +496,7 @@ def _session_info_to_generator_fields(data: dict, from_wa: str) -> dict:
         "detalles": data.get("area_vigilar",""),
         "contacto": data.get("nombre",""),
         "email": data.get("email",""),
-        "to_whatsapp": from_wa if from_wa.startswith("whatsapp:") else ""
+        "to_whatsapp": from_wa if (from_wa or "").startswith("whatsapp:") else ""
     }
     info["tamano_piscina"] = data.get("tamano_piscina","")
     info["telefono"] = data.get("telefono","")
@@ -541,15 +553,16 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
         send_whatsapp_media_only_pdf(ADMIN_WA, resumen_admin, pdf_url, MEDIA_DELAY)
 
 def _advance_flow_until_input(resp: MessagingResponse, sess: dict):
+    """Avanza automáticamente por bloques de 'mensaje' hasta requerir input."""
     while True:
         node = FLOW_INDEX.get(str(sess["node_id"]))
         if not node:
             _reply(resp, "⚠️ No pude continuar el flujo. Escribe *reiniciar*.")
             return "stop"
 
-        ntype = node.get("type")
+        ntype   = node.get("type")
         content = node.get("content", "")
-        varname = node.get("variableName", "").strip()
+        varname = (node.get("variableName") or "").strip()
         nextId  = str(node.get("nextId") or "")
 
         if ntype == "mensaje":
@@ -567,91 +580,154 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict):
             return "wait_input"
 
         elif ntype == "condicional":
-            txt = _render_template_text(content, sess["data"])
+            txt  = _render_template_text(content, sess["data"])
             opts = _present_options(node)
             _reply(resp, f"{txt}\n{opts}" if opts else txt)
-            sess["awaiting_option_for"] = node["id"]
+            sess["awaiting_option_for"] = str(node["id"])
             return "wait_option"
 
         else:
             _reply(resp, "⚠️ Tipo de bloque no reconocido.")
             return "stop"
 
+def _match_option(node, user_text: str):
+    """Devuelve (idx, option) o (None, None). Acepta 1/2/3/4, emojis y coincidencia por texto."""
+    if not node: return (None, None)
+    options = node.get("options", []) or []
+    if not options: return (None, None)
+
+    # 1) por número (incluye emojis)
+    d = _digits_from_text(user_text)
+    if d:
+        try:
+            i = int(d) - 1
+            if 0 <= i < len(options):
+                return (i, options[i])
+        except Exception:
+            pass
+
+    # 2) por texto limpio
+    ut = _clean_option_text(user_text)
+    for i, opt in enumerate(options):
+        if ut and ut in _clean_option_text(opt.get("text","")):
+            return (i, opt)
+
+    return (None, None)
+
 # ---------------------------------------------------------------------
-# Webhook Twilio - Motor de conversación con flujo JSON
+# Webhook Twilio - recibe mensajes de WhatsApp
 # ---------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        # Datos entrantes
-        data = request.form.to_dict() if request.form else request.get_json(force=True, silent=True) or {}
-        body_raw = data.get("Body", "").strip()
-        body = _strip_accents_and_symbols(body_raw)
-        from_wa = data.get("From", "")
-        to_wa = data.get("To", "")
+        # Twilio manda application/x-www-form-urlencoded
+        data = request.form.to_dict() if not request.is_json else (request.get_json() or {})
+        logging.info("Incoming: %s", data)
+
+        body_raw = data.get("Body", "") or data.get("body", "")
+        body = (body_raw or "").strip()
+        body_norm = _strip_accents_and_symbols(body)
+        from_wa = data.get("From", "") or data.get("from", "")
+        to_wa   = data.get("To", "")   or data.get("to", "")
+
         resp = MessagingResponse()
 
-        # Sesión del usuario
-        sess = SESSIONS.get(from_wa)
-
-        # Reinicio manual
-        if body in ("reiniciar", "reset", "inicio"):
-            SESSIONS[from_wa] = {"node_id": FIRST_NODE_ID, "data": {}}
-            _reply(resp, "🔄 Flujo reiniciado correctamente. Iniciando atención...")
-            SESSIONS[from_wa]["node_id"] = FIRST_NODE_ID
-            _advance_flow_until_input(resp, SESSIONS[from_wa])
-            return str(resp), 200, {"Content-Type": "application/xml"}
-
-        # Si no hay sesión activa → bienvenida
-        if not sess:
-            _reply(resp, "👋 Hola, bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
-            return str(resp), 200, {"Content-Type": "application/xml"}
-
-        # Si está esperando respuesta a una pregunta
-        if sess.get("last_question"):
-            varname = sess["last_question"]
-            sess["data"][varname] = body_raw.strip()
-            sess["last_question"] = None
-            sess["node_id"] = sess.pop("pending_next_id", None)
-            result = _advance_flow_until_input(resp, sess)
-            return str(resp), 200, {"Content-Type": "application/xml"}
-
-        # Si está esperando una opción condicional
-        if sess.get("awaiting_option_for"):
-            node_id = str(sess["awaiting_option_for"])
-            node = FLOW_INDEX.get(node_id)
-            if node:
-                # Buscar coincidencia con número u opción
-                selected = None
-                for opt in node.get("options", []):
-                    t = opt.get("text", "").lower()
-                    if body in _strip_accents_and_symbols(t):
-                        selected = opt
-                        break
-                    if re.match(r"^\d+", body) and body[0] in t:
-                        selected = opt
-                        break
-                if selected:
-                    sess["awaiting_option_for"] = None
-                    sess["node_id"] = str(selected.get("nextId"))
-                    sess["data"][node.get("variableName", "opcion")] = selected.get("text")
-                    result = _advance_flow_until_input(resp, sess)
-                    return str(resp), 200, {"Content-Type": "application/xml"}
-
-            _reply(resp, "⚠️ No entendí tu selección. Por favor escribe el número de la opción.")
-            return str(resp), 200, {"Content-Type": "application/xml"}
-
-        # Si escribe “hola” fuera del flujo
-        if body in ("hola", "buenas", "hey", "holi"):
+        # Filtro de saludos: no lanza flujo
+        if body_norm in ("hola", "buenas", "buenos dias", "buenas tardes", "hey"):
             _reply(resp, "👋 Hola! Bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
             return str(resp), 200, {"Content-Type": "application/xml"}
 
-        # Si llega aquí y no encaja nada
+        # Reiniciar flujo
+        if body_norm == "reiniciar":
+            if not FIRST_NODE_ID:
+                _reply(resp, "⚠️ Flujo no disponible. Intenta más tarde.")
+                return str(resp), 200, {"Content-Type": "application/xml"}
+            SESSIONS[from_wa] = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None
+            }
+            _reply(resp, "🔄 Flujo reiniciado correctamente. Iniciando atención...")
+            _advance_flow_until_input(resp, SESSIONS[from_wa])
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si no hay sesión activa
+        sess = SESSIONS.get(from_wa)
+        if not sess:
+            _reply(resp, "Escribe *reiniciar* para comenzar tu atención en Smart Plagas.")
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si espera respuesta de condicional (opciones)
+        if sess.get("awaiting_option_for"):
+            node = FLOW_INDEX.get(sess["awaiting_option_for"])
+            idx, opt = _match_option(node, body)
+            if opt is None:
+                _reply(resp, "⚠️ No entendí tu selección. Por favor escribe el *número* de la opción.")
+                # re-mostrar opciones
+                txt  = _render_template_text(node.get("content",""), sess["data"])
+                opts = _present_options(node)
+                _reply(resp, f"{txt}\n{opts}")
+                return str(resp), 200, {"Content-Type": "application/xml"}
+
+            # guardar si hay saveAs
+            save_as = (opt.get("saveAs") or "").strip()
+            if save_as:
+                # valor limpio (sin emojis/num)
+                value_clean = _clean_option_text(opt.get("text",""))
+                sess["data"][save_as] = value_clean
+
+            # pasar al siguiente bloque
+            sess["node_id"] = str(opt.get("nextId") or "")
+            sess["awaiting_option_for"] = None
+
+            # Si justo después del condicional corresponde terminar o seguir preguntando
+            status = _advance_flow_until_input(resp, sess)
+
+            # Si llegamos al bloque final de agradecimiento y ya tenemos datos suficientes, generar cotización
+            # Regla: cuando hay dirección + nombre + servicio, intentamos generar estimado
+            try:
+                if sess["data"].get("direccion") and (sess["data"].get("servicio") or sess["data"].get("subservicio")):
+                    info = _session_info_to_generator_fields(sess["data"], from_wa)
+                    _send_estimate_and_files(resp, info, "📄 He preparado tu estimado.")
+            except Exception as e:
+                logging.exception("send_estimate failed: %s", e)
+
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si espera respuesta de pregunta abierta
+        if sess.get("last_question"):
+            var = sess["last_question"]
+            sess["data"][var] = body.strip()
+            # mover al siguiente
+            next_id = sess.get("pending_next_id")
+            sess["last_question"] = None
+            sess["pending_next_id"] = None
+            if next_id:
+                sess["node_id"] = str(next_id)
+            status = _advance_flow_until_input(resp, sess)
+
+            # Si tras contestar ya tenemos dirección + servicio, enviar estimado
+            try:
+                if sess["data"].get("direccion") and (sess["data"].get("servicio") or sess["data"].get("subservicio")):
+                    info = _session_info_to_generator_fields(sess["data"], from_wa)
+                    _send_estimate_and_files(resp, info, "📄 He preparado tu estimado.")
+            except Exception as e:
+                logging.exception("send_estimate failed: %s", e)
+
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si no esperaba nada específico
         _reply(resp, "🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
     except Exception as e:
-        logging.exception("⚠️ Error en webhook:")
-        resp = MessagingResponse()
-        _reply(resp, f"⚠️ Error interno: {e}")
-        return str(resp), 200, {"Content-Type": "application/xml"}
+        logging.exception("webhook error: %s", e)
+        return str(MessagingResponse().message("⚠️ Error interno del servidor.")), 200, {"Content-Type": "application/xml"}
+
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True, use_reloader=False)
