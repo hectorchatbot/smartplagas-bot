@@ -578,7 +578,7 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict):
             return "stop"
 
 # ---------------------------------------------------------------------
-# Twilio Webhook ÚNICO (acepta JSON y x-www-form-urlencoded)
+# Webhook Twilio - recibe mensajes de WhatsApp
 # ---------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -591,27 +591,28 @@ def webhook():
 
         print("📩 Datos recibidos:", data)
 
+        # Extraer campos principales
         body = data.get("Body", "").strip().lower()
-        sender = data.get("From", "")
+        from_wa = data.get("From", "")
+        to_wa = data.get("To", "")
 
-        if not body:
-            return jsonify({"ok": False, "error": "Sin Body"}), 400
+        # Preparar respuesta
+        resp = MessagingResponse()
 
-        # Respuesta simple de prueba
-        if body in ["hola", "reiniciar", "start"]:
-            return jsonify({
-                "ok": True,
-                "msg": f"Hola 👋, bienvenido al bot Smart Plagas!",
-                "received": data
-            }), 200
+        # Lógica básica de prueba
+        if body in ["hola", "buenas", "hey"]:
+            resp.message("👋 Hola! Bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
+        elif body == "reiniciar":
+            resp.message("🔄 Flujo reiniciado correctamente. Iniciando atención... ¿Cómo te llamas?")
+        else:
+            resp.message("🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
 
-        # Si no es comando conocido
-        return jsonify({"ok": True, "msg": "Mensaje recibido"}), 200
+        # Retornar XML para Twilio
+        return str(resp), 200, {"Content-Type": "application/xml"}
 
     except Exception as e:
-        print("❌ Error en webhook:", str(e))
-        return jsonify({"ok": False, "error": str(e)}), 500
-
+        print("⚠️ Error en webhook:", e)
+        return str(MessagingResponse().message("⚠️ Error interno del servidor.")), 200, {"Content-Type": "application/xml"}
 
 # ---------------------------------------------------------------------
 # Main
