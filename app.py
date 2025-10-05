@@ -1,31 +1,25 @@
 # -*- coding: utf-8 -*-
+import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging
 from dotenv import load_dotenv
-load_dotenv(override=True)
-
-import os, re, time, unicodedata, datetime, json
-import subprocess, shutil  # <-- para LibreOffice
 from flask import Flask, request, jsonify, send_from_directory, abort
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
-
-# --- DOCX (plantilla Jinja) ---
 from docxtpl import DocxTemplate
 
-# Intento 1: Word/docx2pdf (Windows/Mac)
-try:
-    from docx2pdf import convert as docx2pdf_convert
-except Exception:
-    docx2pdf_convert = None
+# ---------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------
+logging.basicConfig(level=logging.INFO)
 
-# COM para Word (evita "No se ha llamado a CoInitialize" en Windows)
-try:
-    import pythoncom
-except Exception:
-    pythoncom = None
+# ---------------------------------------------------------------------
+# Carga .env
+# ---------------------------------------------------------------------
+load_dotenv(override=True)
 
+# ---------------------------------------------------------------------
+# Flask + CORS
+# ---------------------------------------------------------------------
 app = Flask(__name__)
-
-# --- CORS (para Botpress/Browser fetch) ---
 ALLOWED_ORIGIN  = os.getenv("CORS_ALLOW_ORIGIN", "*")
 ALLOWED_METHODS = "GET, POST, OPTIONS"
 ALLOWED_HEADERS = "Content-Type, ngrok-skip-browser-warning, Authorization"
@@ -44,7 +38,9 @@ def _cors_preflight():
         "Access-Control-Allow-Headers": ALLOWED_HEADERS,
     })
 
-# ========== Config ==========
+# ---------------------------------------------------------------------
+# Variables de entorno
+# ---------------------------------------------------------------------
 TW_SID   = os.getenv("TWILIO_ACCOUNT_SID", "")
 TW_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TW_FROM  = os.getenv("TWILIO_WHATSAPP_FROM") or os.getenv("TWILIO_PHONE_NUMBER") or "whatsapp:+14155238886"
@@ -52,25 +48,22 @@ ADMIN_WA = os.getenv("ADMIN_WHATSAPP") or os.getenv("MY_PHONE_NUMBER") or ""
 
 BASE_URL = (os.getenv("BASE_URL") or os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 
-# Archivos públicos SIEMPRE en out/
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 FILES_SUBDIR = (os.getenv("FILES_DIR", "out") or "out").strip()
 FILES_DIR    = os.path.join(BASE_DIR, FILES_SUBDIR)
 os.makedirs(FILES_DIR, exist_ok=True)
 
-# Plantilla fija (NO cambiar)
 TEMPLATE_DOCX = os.getenv("TEMPLATE_DOCX", os.path.join(BASE_DIR, "templates", "templatescotizacion_template.docx"))
 
-# Envíos
 SEND_PDF    = (os.getenv("SEND_PDF_TO_CLIENT", "true").lower() == "true")
 SEND_DOC    = (os.getenv("SEND_DOC_TO_CLIENT", "false").lower() == "true")
 MEDIA_DELAY = float(os.getenv("MEDIA_DELAY_SECONDS", "1.0"))
 
-# Twilio client
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
-
-# ========== Precios por rangos (CLP) ==========
+# ---------------------------------------------------------------------
+# Precios
+# ---------------------------------------------------------------------
 TRAMOS = [
     (0, 50), (51, 100), (101, 200), (201, 300),
     (301, 500), (501, 1000), (1001, 2000), (2001, 9999999),
@@ -85,19 +78,19 @@ def _fmt_money_clp(value: int) -> str:
 
 def _strip_accents_and_symbols(text: str) -> str:
     t = text or ""
-    t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)
+    t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)  # quita emojis/números circ.
     t = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
     return re.sub(r"[^a-zA-Z0-9\s]", " ", t).lower().strip()
 
-def _canon_servicio(servicio: str) -> str:
-    s = _strip_accents_and_symbols(servicio)
+def _canon_servicio_para_precios(servicio_humano: str) -> str:
+    s = _strip_accents_and_symbols(servicio_humano)
+    if "desratiz" in s:   return "desratizacion"
+    if "desinfecc" in s:  return "desinfeccion"
     if "desinsect" in s:  return "desinsectacion"
-    if "desratiz"  in s:  return "desratizacion"
-    if "desinfect" in s:  return "desinfeccion"
     return "desinsectacion"
 
-def precio_por_tramo(servicio: str, m2: float) -> int:
-    tabla = PRECIOS.get(_canon_servicio(servicio))
+def precio_por_tramo(servicio_precio: str, m2: float) -> int:
+    tabla = PRECIOS.get(servicio_precio)
     if not tabla: return 0
     m2n = int(float(m2) if m2 else 0)
     for idx, (lo, hi) in enumerate(TRAMOS):
@@ -105,8 +98,9 @@ def precio_por_tramo(servicio: str, m2: float) -> int:
             return int(tabla[idx])
     return int(tabla[-1])
 
-
-# ========== Utilidades JSON / URLs ==========
+# ---------------------------------------------------------------------
+# Utilidades varias
+# ---------------------------------------------------------------------
 def _safe(x):
     if x is None: return ""
     if isinstance(x, (list, tuple)):
@@ -128,91 +122,32 @@ def build_urls(filename_docx: str, filename_pdf: str):
     public = public_base_from_request().rstrip("/")
     docx_url = f"{public}/files/{filename_docx}"
     pdf_url  = f"{public}/files/{filename_pdf}"
-
     def _bypass(u: str) -> str:
         if "ngrok-free.app" in u and "ngrok-skip-browser-warning" not in u:
             sep = "&" if "?" in u else "?"
             return f"{u}{sep}ngrok-skip-browser-warning=true"
         return u
-
     return _bypass(docx_url), _bypass(pdf_url)
 
+# ---------------------------------------------------------------------
+# Conversión DOCX -> PDF
+# ---------------------------------------------------------------------
+try:
+    from docx2pdf import convert as docx2pdf_convert
+except Exception:
+    docx2pdf_convert = None
+try:
+    import pythoncom
+except Exception:
+    pythoncom = None
 
-# ========== Normalización del payload ==========
-def normalize_payload(data: dict) -> dict:
-    data = data or {}
-    servicio  = _safe(data.get("servicioinicial") or data.get("servicio") or data.get("servicio_inicial"))
-    cliente   = _safe(data.get("tipo_clientes")   or data.get("cliente")  or data.get("tipo_cliente"))
-    m2_raw    = _safe(data.get("metro_2")         or data.get("m2")       or data.get("metros2"))
-    direccion = _safe(data.get("lugar_D")         or data.get("direccion") or data.get("ubicacion"))
-    comuna    = _safe(data.get("comuna"))
-    detalles  = _safe(data.get("detalles_A")      or data.get("detalles"))
-    contacto  = _safe(data.get("nomape_A")        or data.get("contacto")  or data.get("nombre"))
-    fono      = _safe(data.get("fono")            or data.get("telefono")  or data.get("phone"))
-    email     = _safe(data.get("correoelect")     or data.get("email"))
-
-    try:
-        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
-    except Exception:
-        m2_num = 0.0
-
-    to_wa = ""
-    if fono:
-        digits = "".join(ch for ch in fono if ch.isdigit())
-        if   digits.startswith("56"): to_wa = f"whatsapp:+{digits}"
-        elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
-        elif digits:                  to_wa = f"whatsapp:+{digits}"
-
-    return {
-        "fecha": datetime.date.today().strftime("%d-%m-%Y"),
-        "servicio": servicio,
-        "cliente": cliente,
-        "m2": m2_num,
-        "direccion": direccion,
-        "comuna": comuna,
-        "detalles": detalles,
-        "contacto": contacto,
-        "email": email,
-        "to_whatsapp": to_wa
-    }
-
-
-# ========== Generación con PLANTILLA ==========
-def generar_docx_desde_plantilla(path: str, info: dict) -> None:
-    if not os.path.exists(TEMPLATE_DOCX):
-        raise FileNotFoundError(f"Plantilla no encontrada: {TEMPLATE_DOCX}")
-
-    tpl = DocxTemplate(TEMPLATE_DOCX)
-    try:
-        m2_txt = str(int(info["m2"])) if float(info["m2"]).is_integer() else str(info["m2"])
-    except Exception:
-        m2_txt = str(info["m2"])
-
-    total = precio_por_tramo(info["servicio"], info["m2"])
-    context = {
-        "fecha":     info["fecha"],
-        "cliente":   info["cliente"],
-        "direccion": info["direccion"],
-        "comuna":    info.get("comuna",""),
-        "contacto":  info["contacto"],
-        "email":     info["email"],
-        "servicio":  info["servicio"],
-        "m2":        m2_txt,
-        "precio":    _fmt_money_clp(total),
-    }
-    tpl.render(context)
-    tpl.save(path)
-
-# ---------- Conversión a PDF: Word (docx2pdf) o LibreOffice ----------
 def _lo_bin():
-    """Devuelve 'soffice' o 'libreoffice' si existe en PATH; si no, None."""
     for name in ("soffice", "libreoffice"):
         if shutil.which(name):
             return name
     return None
 
 def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
-    """DOCX -> PDF usando LibreOffice headless (Linux)."""
     outdir = os.path.dirname(pdf_path)
     bin_lo = _lo_bin()
     if not bin_lo:
@@ -227,11 +162,6 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
         raise RuntimeError("LibreOffice no generó el PDF")
 
 def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
-    """
-    1) Si docx2pdf (Word) está disponible (Windows/Mac), úsalo.
-    2) Si no, usa LibreOffice headless (Linux).
-    """
-    # Ruta 1: Word/docx2pdf
     if docx2pdf_convert is not None:
         time.sleep(0.4)
         com_inicializado = False
@@ -252,12 +182,31 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
         if not os.path.exists(pdf_path):
             raise RuntimeError("No se generó el PDF (docx2pdf).")
         return
-
-    # Ruta 2: LibreOffice headless
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
+def generar_docx_desde_plantilla(path: str, info: dict) -> None:
+    if not os.path.exists(TEMPLATE_DOCX):
+        raise FileNotFoundError(f"Plantilla no encontrada: {TEMPLATE_DOCX}")
+    tpl = DocxTemplate(TEMPLATE_DOCX)
+    try:
+        m2_txt = str(int(info["m2"])) if float(info["m2"]).is_integer() else str(info["m2"])
+    except Exception:
+        m2_txt = str(info["m2"])
+    total = precio_por_tramo(info["servicio_precio"], info["m2"])
+    context = {
+        "fecha":     info["fecha"],
+        "cliente":   info["cliente"],
+        "direccion": info["direccion"],
+        "comuna":    info.get("comuna",""),
+        "contacto":  info["contacto"],
+        "email":     info["email"],
+        "servicio":  info["servicio_label"],
+        "m2":        m2_txt,
+        "precio":    _fmt_money_clp(total),
+    }
+    tpl.render(context)
+    tpl.save(path)
 
-# ========== WhatsApp ==========
 def send_whatsapp_media_only_pdf(to_wa: str, caption: str, pdf_url: str, delay: float = MEDIA_DELAY):
     result = {}
     if not (twilio and to_wa and pdf_url):
@@ -276,40 +225,50 @@ def send_whatsapp_media_only_pdf(to_wa: str, caption: str, pdf_url: str, delay: 
         result["error"] = str(e)
     return result
 
+# ---------------------------------------------------------------------
+# Normalización para integraciones externas
+# ---------------------------------------------------------------------
+def normalize_payload(data: dict) -> dict:
+    data = data or {}
+    servicio  = _safe(data.get("servicioinicial") or data.get("servicio") or data.get("servicio_inicial"))
+    cliente   = _safe(data.get("tipo_clientes")   or data.get("cliente")  or data.get("tipo_cliente") or "Residencial")
+    m2_raw    = _safe(data.get("metro_2")         or data.get("m2")       or data.get("metros2"))
+    direccion = _safe(data.get("lugar_D")         or data.get("direccion") or data.get("ubicacion"))
+    comuna    = _safe(data.get("comuna"))
+    detalles  = _safe(data.get("detalles_A")      or data.get("detalles"))
+    contacto  = _safe(data.get("nomape_A")        or data.get("contacto")  or data.get("nombre"))
+    fono      = _safe(data.get("fono")            or data.get("telefono")  or data.get("phone"))
+    email     = _safe(data.get("correoelect")     or data.get("email"))
 
-# ========== Archivos públicos ==========
-@app.route("/files/<path:filename>")
-def files_route(filename):
-    full = os.path.abspath(os.path.join(FILES_DIR, filename))
-    base = os.path.abspath(FILES_DIR)
-    if not full.startswith(base): abort(403)
-    if not os.path.exists(full): abort(404)
-    return send_from_directory(FILES_DIR, filename, as_attachment=False)
+    try:
+        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
+    except Exception:
+        m2_num = 0.0
 
-@app.route("/static/<path:filename>")
-def static_files(filename):
-    return files_route(filename)
+    to_wa = ""
+    if fono:
+        digits = "".join(ch for ch in fono if ch.isdigit())
+        if   digits.startswith("56"): to_wa = f"whatsapp:+{digits}"
+        elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
+        elif digits:                  to_wa = f"whatsapp:+{digits}"
 
+    servicio_label  = servicio or "Desinsectación"
+    servicio_precio = _canon_servicio_para_precios(servicio_label)
 
-# ========== Health ==========
-@app.get("/health")
-def health():
-    lo_ok = bool(_lo_bin())
-    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
-    return jsonify({
-        "status": "ok",
-        "base_url": public_base_from_request(),
-        "files_dir": FILES_DIR,
-        "template_exists": os.path.exists(TEMPLATE_DOCX),
-        "pdf_engine": engine,
-        "send_pdf": SEND_PDF,
-        "send_doc": SEND_DOC,
-        "media_delay": MEDIA_DELAY,
-        "twilio_from": TW_FROM,
-    }), 200
+    return {
+        "fecha": datetime.date.today().strftime("%d-%m-%Y"),
+        "servicio_label": servicio_label,
+        "servicio_precio": servicio_precio,
+        "cliente": cliente,
+        "m2": m2_num,
+        "direccion": direccion,
+        "comuna": comuna,
+        "detalles": detalles,
+        "contacto": contacto,
+        "email": email,
+        "to_whatsapp": to_wa
+    }
 
-
-# ========== Lectura de payload tolerante ==========
 def _read_payload_any():
     if request.is_json:
         data = request.get_json(silent=True)
@@ -327,13 +286,14 @@ def _read_payload_any():
         return {k: v for k, v in request.form.items()}
     return {}
 
-
-# ========== Core (JSON externo: Botpress, Postman, etc.) ==========
+# ---------------------------------------------------------------------
+# Generación de cotización (usada por /gen-cotizacion y el flujo)
+# ---------------------------------------------------------------------
 def handle_generate():
     payload = _read_payload_any()
     info = normalize_payload(payload)
 
-    faltantes = [k for k in ("servicio","cliente","m2","direccion","contacto") if not info[k]]
+    faltantes = [k for k in ("servicio_label","cliente","m2","direccion","contacto") if not info.get(k)]
     if faltantes:
         return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
@@ -342,12 +302,10 @@ def handle_generate():
         return jsonify(ok=False, error="template_missing",
                        detail=f"No se encontró la plantilla: {TEMPLATE_DOCX}"), 500
 
-    # Verificamos que exista al menos UNA vía de conversión a PDF
     if (docx2pdf_convert is None) and (not _lo_bin()):
         return jsonify(ok=False, error="pdf_engine_missing",
                        detail="No hay Word/docx2pdf ni LibreOffice disponibles para convertir a PDF."), 500
 
-    # 3) nombres/paths
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base = f"cotizacion_{ts}"
     docx_name = base + ".docx"
@@ -355,26 +313,18 @@ def handle_generate():
     docx_path = os.path.join(FILES_DIR, docx_name)
     pdf_path  = os.path.join(FILES_DIR, pdf_name)
 
-    # 4) DOCX (plantilla SIEMPRE)
     try:
         generar_docx_desde_plantilla(docx_path, info)
-    except Exception as e:
-        return jsonify(ok=False, error="template_render_failed", detail=str(e)), 500
-
-    # 5) PDF con Word o LibreOffice
-    try:
         convertir_docx_a_pdf(docx_path, pdf_path)
     except Exception as e:
-        return jsonify(ok=False, error="pdf_convert_failed", detail=str(e)), 500
+        return jsonify(ok=False, error="doc_generate_failed", detail=str(e)), 500
 
-    # 6) URLs públicas
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
 
-    # 7) Resumen WA (incluye total)
-    total = _fmt_money_clp(precio_por_tramo(info["servicio"], info["m2"]))
+    total = _fmt_money_clp(precio_por_tramo(info["servicio_precio"], info["m2"]))
     partes = [
         "✅ *Nueva solicitud recibida*\n",
-        f"*Servicio:* {info['servicio']}\n",
+        f"*Servicio:* {info['servicio_label']}\n",
         f"*Cliente:* {info['cliente']}\n",
         f"*Metros²:* {info['m2']}\n",
         f"*Ubicación:* {info['direccion']}\n",
@@ -382,13 +332,12 @@ def handle_generate():
     if info.get("comuna"):
         partes.append(f"*Comuna:* {info['comuna']}\n")
     partes.extend([
-        f"*Detalles:* {info['detalles']}\n",
+        f"*Detalles:* {info.get('detalles','')}\n",
         f"*Contacto:* {info['contacto']} | {info['email']}\n",
         f"*Total:* {total}"
     ])
     resumen = "".join(partes)
 
-    # 8) WhatsApp (SOLO PDF)
     sids = {}
     if info["to_whatsapp"] and SEND_PDF:
         sids["client"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
@@ -402,93 +351,152 @@ def handle_generate():
                    to_wa=info["to_whatsapp"],
                    twilio=sids), 200
 
-
-# ---- Rutas JSON con CORS ----
+# ---------------------------------------------------------------------
+# Rutas públicas (CORS)
+# ---------------------------------------------------------------------
 @app.route("/gen-cotizacion", methods=["POST", "OPTIONS"])
 def gen_cotizacion():
     if request.method == "OPTIONS":
         return _cors_preflight()
     return handle_generate()
 
-@app.route("/webhook", methods=["POST", "OPTIONS"])
-def webhook():
-    if request.method == "OPTIONS":
-        return _cors_preflight()
-    return handle_generate()
+# ---------------------------------------------------------------------
+# Archivos estáticos públicos
+# ---------------------------------------------------------------------
+@app.route("/files/<path:filename>")
+def files_route(filename):
+    full = os.path.abspath(os.path.join(FILES_DIR, filename))
+    base = os.path.abspath(FILES_DIR)
+    if not full.startswith(base): abort(403)
+    if not os.path.exists(full): abort(404)
+    return send_from_directory(FILES_DIR, filename, as_attachment=False)
 
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return files_route(filename)
 
-# ================== PARSEO DE MENSAJES ENTRANTES (WhatsApp) ==================
-CAMPO_ALIASES = {
-    "servicio": ["servicio", "servicioinicial", "tipo_servicio"],
-    "m2": ["m2", "metro_2", "metros2", "metros", "superficie", "mt2", "mts2"],
-    "direccion": ["direccion", "lugar_d", "ubicacion", "dirección"],
-    "comuna": ["comuna"],
-    "cliente": ["cliente", "tipo_clientes", "tipo_cliente"],
-    "detalles": ["detalles", "detalles_a", "nota", "comentario"],
-    "contacto": ["contacto", "nombre", "nomape_a"],
-    "email": ["email", "correo", "correoelect", "mail"],
-}
+# ---------------------------------------------------------------------
+# Health / Debug
+# ---------------------------------------------------------------------
+@app.get("/health")
+def health():
+    lo_ok = bool(_lo_bin())
+    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
+    return jsonify({
+        "status": "ok",
+        "base_url": public_base_from_request(),
+        "files_dir": FILES_DIR,
+        "template_exists": os.path.exists(TEMPLATE_DOCX),
+        "pdf_engine": engine,
+        "send_pdf": SEND_PDF,
+        "send_doc": SEND_DOC,
+        "media_delay": MEDIA_DELAY,
+        "twilio_from": TW_FROM,
+    }), 200
 
-def _kv_scan(text: str) -> dict:
-    out = {}
-    text = text.replace("\r", "\n")
-    parts = re.split(r"[;\n]+", text)
-    for p in parts:
-        if not p.strip():
-            continue
-        m = re.match(r"\s*([a-zA-Z_áéíóúñ]+)\s*[:=]\s*(.+)$", p.strip())
-        if not m:
-            continue
-        k_raw, v = m.group(1).strip(), m.group(2).strip()
-        k = k_raw.lower()
-        for canon, aliases in CAMPO_ALIASES.items():
-            if k in aliases:
-                out[canon] = v
-                break
-    return out
+@app.get("/debug")
+def debug():
+    return f"DEBUG OK - BASE_URL={BASE_URL}", 200
 
-def _infer_from_free_text(text: str) -> dict:
-    info = {}
-    s = text.lower()
+# ---------------------------------------------------------------------
+# ======== Motor de flujo con chatbot-flujo.json (WhatsApp) ===========
+# ---------------------------------------------------------------------
+FLOW_PATH = os.path.join(BASE_DIR, "chatbot-flujo.json")
+FLOW_ENABLED = True
+FLOW = []
+FLOW_INDEX = {}
+FIRST_NODE_ID = None
 
-    if "desinsect" in s:  info["servicio"] = "Desinsectación interior"
-    elif "desratiz" in s: info["servicio"] = "Desratización"
-    elif "desinfect" in s:info["servicio"] = "Desinfección"
+def _load_flow():
+    global FLOW, FLOW_INDEX, FIRST_NODE_ID
+    FLOW_INDEX.clear()
+    FLOW[:] = []
+    if os.path.exists(FLOW_PATH):
+        with open(FLOW_PATH, "r", encoding="utf-8") as f:
+            FLOW[:] = json.load(f)
+        for node in FLOW:
+            FLOW_INDEX[str(node.get("id"))] = node
+        FIRST_NODE_ID = str(FLOW[0]["id"]) if FLOW else None
+_load_flow()
 
-    m = re.search(r"(\d{2,5})\s*(m2|m²|mts2|mt2)?", s)
-    if m:
-        info["m2"] = m.group(1)
+SESSIONS = {}  # { from_wa : {"node_id":..., "data": {...}, ... } }
 
-    m = re.search(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", text, re.I)
-    if m:
-        info["email"] = m.group(0)
+def _render_template_text(text: str, data: dict) -> str:
+    def repl(m):
+        k = m.group(1).strip()
+        return str(data.get(k, ""))
+    return re.sub(r"\{([^}]+)\}", repl, text or "")
 
-    m = re.search(r"(?:dir(?:ecci[oó]n)?|ubicaci[oó]n)\s*[:\-]?\s*(.+)", s)
-    if m:
-        info["direccion"] = m.group(1).strip()
+def _reply(resp: MessagingResponse, text: str):
+    if text:
+        resp.message(text)
 
-    m = re.search(r"(?:soy|me llamo|nombre)\s*[:\-]?\s*([a-záéíóúñ ]{3,})", s, re.I)
-    if m:
-        info["contacto"] = m.group(1).strip().title()
+def _present_options(node):
+    lines = []
+    for opt in node.get("options", []):
+        lines.append(opt.get("text", "").strip())
+    return "\n".join(lines)
 
+def _clean_option_text(t: str) -> str:
+    t = t.strip()
+    t = re.sub(r"^[0-9\W_]+", "", t).strip()
+    return t
+
+def _rango_to_m2(r: str) -> float:
+    s = _strip_accents_and_symbols(r)
+    if "menos" in s or "<" in s:  return 80.0
+    if "100" in s and "200" in s: return 150.0
+    if "mas" in s or ">" in s or "200" in s: return 220.0
+    m = re.search(r"(\d{2,4})", r)
+    return float(m.group(1)) if m else 0.0
+
+def _parse_piscina_to_m2(tamano: str) -> float:
+    if not tamano: return 0.0
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)", tamano.lower())
+    if not m: return 0.0
+    a = float(m.group(1).replace(",", "."))
+    b = float(m.group(2).replace(",", "."))
+    return round(a * b, 1)
+
+def _session_info_to_generator_fields(data: dict, from_wa: str) -> dict:
+    base = (data.get("servicio") or "").strip()
+    sub  = (data.get("subservicio") or "").strip()
+    label = f"{base} - {sub}" if sub else base
+
+    m2 = 0.0
+    if data.get("m2"):
+        try: m2 = float(str(data["m2"]).replace(",", "."))
+        except Exception: m2 = 0.0
+    if not m2 and data.get("rango_m2"):
+        m2 = _rango_to_m2(data["rango_m2"])
+    if not m2 and data.get("tamano_piscina"):
+        m2 = _parse_piscina_to_m2(data["tamano_piscina"])
+
+    servicio_precio = _canon_servicio_para_precios(label)
+    info = {
+        "fecha": datetime.date.today().strftime("%d-%m-%Y"),
+        "servicio_label": label or "Desinsectación",
+        "servicio_precio": servicio_precio,
+        "cliente": "Residencial",
+        "m2": m2 or 0,
+        "direccion": data.get("direccion",""),
+        "comuna": data.get("comuna",""),
+        "detalles": data.get("area_vigilar",""),
+        "contacto": data.get("nombre",""),
+        "email": data.get("email",""),
+        "to_whatsapp": from_wa if from_wa.startswith("whatsapp:") else ""
+    }
+    info["tamano_piscina"] = data.get("tamano_piscina","")
+    info["telefono"] = data.get("telefono","")
     return info
 
-def parse_inbound_payload(body_text: str) -> dict:
-    body_text = body_text or ""
-    data = {}
-    data.update(_kv_scan(body_text))
-    inferred = _infer_from_free_text(body_text)
-    for k, v in inferred.items():
-        data.setdefault(k, v)
-    data.setdefault("cliente", "Residencial")
-    data.setdefault("detalles", "")
-    return data
-
-def generar_y_enviar_desde_info(info_in: dict):
-    required = ("servicio","cliente","m2","direccion","contacto")
-    faltan = [k for k in required if not info_in.get(k)]
-    if faltan:
-        return (False, "", None, f"faltan_campos:{','.join(faltan)}")
+def _send_estimate_and_files(resp, info, resumen_breve=""):
+    if not os.path.exists(TEMPLATE_DOCX):
+        _reply(resp, "⚠️ No se encontró la plantilla de cotización del sistema.")
+        return
+    if (docx2pdf_convert is None) and (not _lo_bin()):
+        _reply(resp, "⚠️ No hay motor de PDF disponible (Word/docx2pdf o LibreOffice).")
+        return
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base = f"cotizacion_{ts}"
@@ -498,89 +506,115 @@ def generar_y_enviar_desde_info(info_in: dict):
     pdf_path  = os.path.join(FILES_DIR, pdf_name)
 
     try:
-        generar_docx_desde_plantilla(docx_path, info_in)
-    except Exception as e:
-        return (False, "", None, f"template_render_failed:{e}")
-
-    try:
+        generar_docx_desde_plantilla(docx_path, info)
         convertir_docx_a_pdf(docx_path, pdf_path)
     except Exception as e:
-        return (False, "", None, f"pdf_convert_failed:{e}")
+        _reply(resp, "⚠️ No pude generar tu documento: " + str(e))
+        return
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
+    total_int = precio_por_tramo(info["servicio_precio"], info["m2"])
+    total_txt = _fmt_money_clp(total_int)
+    detalle_piscina = f"\n🧮 Tamaño piscina: {info['tamano_piscina']}" if info.get("tamano_piscina") else ""
 
-    total = _fmt_money_clp(precio_por_tramo(info_in["servicio"], info_in["m2"]))
-    partes = [
-        "✅ *Nueva cotización generada*\n",
-        f"*Servicio:* {info_in['servicio']}\n",
-        f"*Cliente:* {info_in['cliente']}\n",
-        f"*Metros²:* {info_in['m2']}\n",
-        f"*Ubicación:* {info_in['direccion']}\n",
-    ]
-    if info_in.get("comuna"):
-        partes.append(f"*Comuna:* {info_in['comuna']}\n")
-    partes.extend([
-        f"*Detalles:* {info_in.get('detalles','')}\n",
-        f"*Contacto:* {info_in['contacto']} | {info_in.get('email','')}\n",
-        f"*Total:* {total}"
-    ])
-    resumen = "".join(partes)
+    msg = (
+        f"{resumen_breve}\n"
+        f"*Servicio:* {info['servicio_label']}{detalle_piscina}\n"
+        f"💵 *Estimado:* {total_txt} CLP (m2 aprox: {info['m2']})\n"
+        f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
+        f"📎 *PDF:* {pdf_url}\n"
+        f"📄 *DOCX:* {docx_url}\n\n"
+        f"¿Te agendo una visita esta semana? Responde *SI* o *NO*."
+    )
+    _reply(resp, msg)
 
-    sids = {}
-    if info_in.get("to_whatsapp") and SEND_PDF:
-        sids["client"] = send_whatsapp_media_only_pdf(info_in["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
-    if ADMIN_WA and SEND_PDF:
-        sids["admin"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📣 Copia interna\n\n" + resumen, pdf_url, MEDIA_DELAY)
+    if SEND_PDF and info.get("to_whatsapp"):
+        send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
+    if SEND_PDF and ADMIN_WA:
+        resumen_admin = (
+            "📣 Copia interna\n"
+            f"Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
+            f"Servicio: {info['servicio_label']} | m2: {info['m2']}\n"
+            f"Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
+            f"Total: {total_txt}"
+        )
+        send_whatsapp_media_only_pdf(ADMIN_WA, resumen_admin, pdf_url, MEDIA_DELAY)
 
-    return (True, resumen, {"docx": docx_url, "pdf": pdf_url}, None)
+def _advance_flow_until_input(resp: MessagingResponse, sess: dict):
+    while True:
+        node = FLOW_INDEX.get(str(sess["node_id"]))
+        if not node:
+            _reply(resp, "⚠️ No pude continuar el flujo. Escribe *reiniciar*.")
+            return "stop"
+
+        ntype = node.get("type")
+        content = node.get("content", "")
+        varname = node.get("variableName", "").strip()
+        nextId  = str(node.get("nextId") or "")
+
+        if ntype == "mensaje":
+            rendered = _render_template_text(content, sess["data"])
+            _reply(resp, rendered)
+            if nextId:
+                sess["node_id"] = nextId
+                continue
+            return "final"
+
+        elif ntype == "pregunta":
+            _reply(resp, _render_template_text(content, sess["data"]))
+            sess["last_question"]   = varname if varname else None
+            sess["pending_next_id"] = nextId if nextId else None
+            return "wait_input"
+
+        elif ntype == "condicional":
+            txt = _render_template_text(content, sess["data"])
+            opts = _present_options(node)
+            _reply(resp, f"{txt}\n{opts}" if opts else txt)
+            sess["awaiting_option_for"] = node["id"]
+            return "wait_option"
+
+        else:
+            _reply(resp, "⚠️ Tipo de bloque no reconocido.")
+            return "stop"
+
+# ---------------------------------------------------------------------
+# Twilio Webhook ÚNICO (acepta JSON y x-www-form-urlencoded)
+# ---------------------------------------------------------------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    try:
+        # Detectar tipo de contenido recibido
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+
+        print("📩 Datos recibidos:", data)
+
+        body = data.get("Body", "").strip().lower()
+        sender = data.get("From", "")
+
+        if not body:
+            return jsonify({"ok": False, "error": "Sin Body"}), 400
+
+        # Respuesta simple de prueba
+        if body in ["hola", "reiniciar", "start"]:
+            return jsonify({
+                "ok": True,
+                "msg": f"Hola 👋, bienvenido al bot Smart Plagas!",
+                "received": data
+            }), 200
+
+        # Si no es comando conocido
+        return jsonify({"ok": True, "msg": "Mensaje recibido"}), 200
+
+    except Exception as e:
+        print("❌ Error en webhook:", str(e))
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
-# ========== Webhook Twilio ==========
-@app.post("/twilio-inbound")
-def twilio_inbound():
-    from_wa = (request.form.get("From", "") or "").strip()
-    body    = (request.form.get("Body", "") or "").strip()
-
-    parsed = parse_inbound_payload(body)
-
-    parsed["fono"] = from_wa.replace("whatsapp:", "") if from_wa.startswith("whatsapp:") else from_wa
-    info = normalize_payload(parsed)
-    if from_wa.startswith("whatsapp:"):
-        info["to_whatsapp"] = from_wa
-
-    min_fields = ("servicio","cliente","m2","direccion","contacto")
-    faltan = [k for k in min_fields if not info.get(k)]
-    resp = MessagingResponse()
-
-    if faltan:
-        prompts = {
-            "servicio":  "¿Qué *servicio* necesitas? (desinsectación / desratización / desinfección)",
-            "cliente":   "¿Eres *Residencial* o *Comercial*?",
-            "m2":        "¿Cuántos *m2* aproximados tiene el lugar?",
-            "direccion": "¿Cuál es la *dirección* o ubicación del servicio?",
-            "contacto":  "¿Nombre y *contacto* de la persona a cargo?",
-        }
-        msg = "Para generar tu cotización me faltan:\n"
-        for f in faltan:
-            msg += f"• {prompts.get(f, f'({f})')}\n"
-        msg += "\nTambién puedes enviar todo en un solo mensaje así:\n" \
-               "servicio: Desinsectación; m2: 120; direccion: Casa 123; comuna: Villarrica; contacto: Javiera; email: demo@correo.com; cliente: Residencial"
-        resp.message(msg)
-        return str(resp), 200, {"Content-Type": "application/xml"}
-
-    ok, resumen, urls, err = generar_y_enviar_desde_info(info)
-    if not ok:
-        resp.message("⚠️ No pude generar la cotización.\nDetalle: " + (err or "error desconocido"))
-        return str(resp), 200, {"Content-Type": "application/xml"}
-
-    txt = "📄 Cotización generada.\n" \
-          f"{resumen}\n\n" \
-          f"🔗 PDF: {urls['pdf']}\n" \
-          f"🔗 DOCX: {urls['docx']}"
-    resp.message(txt)
-    return str(resp), 200, {"Content-Type": "application/xml"}
-
-
-# ========== MAIN ==========
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True, use_reloader=False)
