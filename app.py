@@ -578,44 +578,80 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict):
             return "stop"
 
 # ---------------------------------------------------------------------
-# Webhook Twilio - recibe mensajes de WhatsApp
+# Webhook Twilio - Motor de conversación con flujo JSON
 # ---------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        # Detectar tipo de contenido recibido
-        if request.is_json:
-            data = request.get_json()
-        else:
-            data = request.form.to_dict()
-
-        print("📩 Datos recibidos:", data)
-
-        # Extraer campos principales
-        body = data.get("Body", "").strip().lower()
+        # Datos entrantes
+        data = request.form.to_dict() if request.form else request.get_json(force=True, silent=True) or {}
+        body_raw = data.get("Body", "").strip()
+        body = _strip_accents_and_symbols(body_raw)
         from_wa = data.get("From", "")
         to_wa = data.get("To", "")
-
-        # Preparar respuesta
         resp = MessagingResponse()
 
-        # Lógica básica de prueba
-        if body in ["hola", "buenas", "hey"]:
-            resp.message("👋 Hola! Bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
-        elif body == "reiniciar":
-            resp.message("🔄 Flujo reiniciado correctamente. Iniciando atención... ¿Cómo te llamas?")
-        else:
-            resp.message("🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
+        # Sesión del usuario
+        sess = SESSIONS.get(from_wa)
 
-        # Retornar XML para Twilio
+        # Reinicio manual
+        if body in ("reiniciar", "reset", "inicio"):
+            SESSIONS[from_wa] = {"node_id": FIRST_NODE_ID, "data": {}}
+            _reply(resp, "🔄 Flujo reiniciado correctamente. Iniciando atención...")
+            SESSIONS[from_wa]["node_id"] = FIRST_NODE_ID
+            _advance_flow_until_input(resp, SESSIONS[from_wa])
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si no hay sesión activa → bienvenida
+        if not sess:
+            _reply(resp, "👋 Hola, bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si está esperando respuesta a una pregunta
+        if sess.get("last_question"):
+            varname = sess["last_question"]
+            sess["data"][varname] = body_raw.strip()
+            sess["last_question"] = None
+            sess["node_id"] = sess.pop("pending_next_id", None)
+            result = _advance_flow_until_input(resp, sess)
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si está esperando una opción condicional
+        if sess.get("awaiting_option_for"):
+            node_id = str(sess["awaiting_option_for"])
+            node = FLOW_INDEX.get(node_id)
+            if node:
+                # Buscar coincidencia con número u opción
+                selected = None
+                for opt in node.get("options", []):
+                    t = opt.get("text", "").lower()
+                    if body in _strip_accents_and_symbols(t):
+                        selected = opt
+                        break
+                    if re.match(r"^\d+", body) and body[0] in t:
+                        selected = opt
+                        break
+                if selected:
+                    sess["awaiting_option_for"] = None
+                    sess["node_id"] = str(selected.get("nextId"))
+                    sess["data"][node.get("variableName", "opcion")] = selected.get("text")
+                    result = _advance_flow_until_input(resp, sess)
+                    return str(resp), 200, {"Content-Type": "application/xml"}
+
+            _reply(resp, "⚠️ No entendí tu selección. Por favor escribe el número de la opción.")
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si escribe “hola” fuera del flujo
+        if body in ("hola", "buenas", "hey", "holi"):
+            _reply(resp, "👋 Hola! Bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
+            return str(resp), 200, {"Content-Type": "application/xml"}
+
+        # Si llega aquí y no encaja nada
+        _reply(resp, "🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
     except Exception as e:
-        print("⚠️ Error en webhook:", e)
-        return str(MessagingResponse().message("⚠️ Error interno del servidor.")), 200, {"Content-Type": "application/xml"}
-
-# ---------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True, use_reloader=False)
+        logging.exception("⚠️ Error en webhook:")
+        resp = MessagingResponse()
+        _reply(resp, f"⚠️ Error interno: {e}")
+        return str(resp), 200, {"Content-Type": "application/xml"}
