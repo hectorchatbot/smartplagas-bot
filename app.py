@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, send_from_directory, abort
+from flask import Flask, request, jsonify, send_from_directory
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from docxtpl import DocxTemplate
+import redis
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv(override=True)
 
+# ------------------------------
+# App + CORS
+# ------------------------------
 app = Flask(__name__)
 ALLOWED_ORIGIN  = os.getenv("CORS_ALLOW_ORIGIN", "*")
 ALLOWED_METHODS = "GET, POST, OPTIONS"
@@ -21,12 +25,38 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Headers"] = ALLOWED_HEADERS
     return resp
 
-def _cors_preflight():
-    return ("", 204, {
-        "Access-Control-Allow-Origin":  ALLOWED_ORIGIN,
-        "Access-Control-Allow-Methods": ALLOWED_METHODS,
-        "Access-Control-Allow-Headers": ALLOWED_HEADERS,
-    })
+# ------------------------------
+# Redis (estado de sesión + dedupe)
+# ------------------------------
+REDIS_URL = (os.getenv("REDIS_URL") or "").strip()
+if not REDIS_URL:
+    raise RuntimeError("Falta REDIS_URL en variables de entorno")
+
+_r = redis.from_url(REDIS_URL, decode_responses=True)
+
+def _sess_key(form: dict) -> str:
+    waid = (form.get("WaId") or "").strip()
+    if waid:
+        return waid
+    return (form.get("From") or "").replace("whatsapp:", "").strip()
+
+def _sess_get(key: str):
+    v = _r.get(f"sess:{key}")
+    return json.loads(v) if v else None
+
+def _sess_set(key: str, val: dict, ttl_sec: int = 60*60*12):
+    _r.set(f"sess:{key}", json.dumps(val), ex=ttl_sec)
+
+def _sess_exists(key: str) -> bool:
+    return _r.exists(f"sess:{key}") == 1
+
+DEDUP_TTL = 300  # 5 min
+def _dedup_should_process(msg_sid: str) -> bool:
+    if not msg_sid:
+        return True
+    # set NX -> true si no existía (procesamos), false si duplicado
+    ok = _r.set(f"dedup:{msg_sid}", "1", nx=True, ex=DEDUP_TTL)
+    return bool(ok)
 
 # ----------------------------------
 # Entorno / Twilio
@@ -65,9 +95,12 @@ PRECIOS = {
 }
 def _fmt_money_clp(v:int)->str: return f"${v:,}".replace(",", ".")
 
+# ----------------------------------
+# Utilidades de normalización / helpers
+# ----------------------------------
 def _strip_accents_and_symbols(text: str) -> str:
     t = text or ""
-    t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)
+    t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)  # emojis, dingbats
     t = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
     return re.sub(r"[^a-zA-Z0-9\s]", " ", t).lower().strip()
 
@@ -282,7 +315,6 @@ def handle_generate():
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
                    to_wa=info["to_whatsapp"], twilio=sids), 200
 
-
 # ----------------------------------
 # FLUJO (JSON)
 # ----------------------------------
@@ -298,52 +330,6 @@ def _load_flow():
         for node in FLOW: FLOW_INDEX[str(node.get("id"))] = node
         FIRST_NODE_ID = str(FLOW[0]["id"]) if FLOW else None
 _load_flow()
-
-# --- Sesión + Redis + deduplicación ---
-import json as _json
-REDIS_URL = os.getenv("REDIS_URL", "").strip()
-_redis = None
-if REDIS_URL:
-    try:
-        import redis
-        _redis = redis.from_url(REDIS_URL, decode_responses=True)
-        try: _redis.ping()
-        except Exception: pass
-    except Exception:
-        _redis = None
-
-SESSIONS = {}       # fallback en memoria
-_MEM_DEDUP = set()  # fallback dedup
-DEDUP_TTL = 300     # 5 minutos
-
-def _sess_key(form: dict)->str:
-    waid = (form.get("WaId") or "").strip()
-    if waid: return waid
-    return (form.get("From") or "").replace("whatsapp:","").strip()
-
-def _sess_get(key:str):
-    if _redis:
-        v = _redis.get(f"sess:{key}")
-        return _json.loads(v) if v else None
-    return SESSIONS.get(key)
-
-def _sess_set(key:str, val:dict):
-    if _redis:
-        _redis.set(f"sess:{key}", _json.dumps(val), ex=60*60*6)
-    else:
-        SESSIONS[key] = val
-
-def _sess_exists(key:str)->bool:
-    if _redis: return _redis.exists(f"sess:{key}") == 1
-    return key in SESSIONS
-
-def _dedup_should_process(msg_sid:str)->bool:
-    if not msg_sid: return True
-    if _redis:
-        ok = _redis.set(f"dedup:{msg_sid}", "1", nx=True, ex=DEDUP_TTL)
-        return bool(ok)
-    if msg_sid in _MEM_DEDUP: return False
-    _MEM_DEDUP.add(msg_sid); return True
 
 # ----------------------------------
 # Helpers de flujo
@@ -367,6 +353,39 @@ def _present_options(node):
 def _clean_option_text(t:str)->str:
     t=t.strip(); t=re.sub(r"^[0-9\W_]+","",t).strip(); return t
 
+def _choose_option(node: dict, user_text: str):
+    """
+    Devuelve (saveAs, value, nextId) según la opción elegida.
+    Acepta números (“1”, “1)”, “1.”) o texto aproximado.
+    """
+    opts = node.get("options", []) or []
+    if not opts:
+        return "", "", ""
+    raw = (user_text or "").strip()
+
+    # 1) Selección por número (al inicio del mensaje)
+    m = re.match(r"^\D*?(\d+)", raw)
+    if m:
+        idx = int(m.group(1))
+        if 1 <= idx <= len(opts):
+            opt = opts[idx-1]
+            saveAs = (opt.get("saveAs") or "").strip()
+            value  = _clean_option_text(opt.get("text",""))
+            nextId = str(opt.get("nextId") or "")
+            return saveAs, value, nextId
+
+    # 2) Coincidencia por texto "relajada"
+    norm = _strip_accents_and_symbols(raw)
+    for opt in opts:
+        ot = _strip_accents_and_symbols(opt.get("text", ""))
+        if ot and (norm == ot or norm in ot or ot in norm):
+            saveAs = (opt.get("saveAs") or "").strip()
+            value  = _clean_option_text(opt.get("text",""))
+            nextId = str(opt.get("nextId") or "")
+            return saveAs, value, nextId
+
+    return "", "", ""
+
 def _rango_to_m2(r:str)->float:
     s=_strip_accents_and_symbols(r)
     if "menos" in s or "<" in s:  return 80.0
@@ -387,9 +406,9 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
     label=f"{base} - {sub}" if sub else base
     m2=0.0
     if data.get("m2"):
-        try: m2=float(str(data["m2"]).replace(",", "."))
+        try: m2=float(str(data["m2"]).replace(",", ".")); 
         except Exception: m2=0.0
-    if not m2 and data.get("rango_m2"):      m2=_rango_to_m2(data["rango_m2"])
+    if not m2 and data.get("rango_m2"):       m2=_rango_to_m2(data["rango_m2"])
     if not m2 and data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
     serv_precio=_canon_servicio_para_precios(label)
     info={
@@ -453,16 +472,11 @@ CAMERA_NODE_IDS = {
 M2_NODE_ID = "1748911555017"  # ¿De cuántos m2...?
 
 def _fix_next_hop(sess: dict, current_node: dict, next_id: str) -> str:
-    """
-    Evita que el flujo caiga en nodos de *cámaras* si el usuario no eligió ese servicio.
-    Si detecta un salto imposible, lo redirige al nodo de m².
-    """
     servicio = (sess.get("data", {}).get("servicio") or "").strip().lower()
     if next_id in CAMERA_NODE_IDS and "cámara" not in servicio and "camara" not in servicio:
         return M2_NODE_ID
     return next_id
 
-# >>>>>>>>>>  PERSISTENCIA EN CADA TRANSICIÓN  <<<<<<<<<<
 def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = None):
     while True:
         node = FLOW_INDEX.get(str(sess["node_id"]))
@@ -507,6 +521,61 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
             _reply(resp, "⚠️ Tipo de bloque no reconocido.")
             if skey: _sess_set(skey, sess)
             return "stop"
+
+# ----------------------------------
+# Rutas
+# ----------------------------------
+@app.get("/")
+def health():
+    return jsonify(ok=True, service="smartplagas-bot", time=datetime.datetime.utcnow().isoformat()+"Z")
+
+@app.route("/files/<path:filename>")
+def files(filename):
+    return send_from_directory(FILES_DIR, filename, as_attachment=False)
+
+@app.post("/generate")
+def generate():
+    return handle_generate()
+
+def _choose_option(node: dict, user_input: str):
+    """
+    Dado un nodo 'condicional' y el texto ingresado por el usuario, retorna
+    (saveAs, value, nextId).
+    - user_input puede ser "1", "2", "3" o el texto de la opción.
+    - Si no matchea ninguna opción, retorna (None, None, None).
+    """
+    if not node or node.get("type") != "condicional":
+        return (None, None, None)
+
+    raw = (user_input or "").strip()
+    opts = node.get("options", []) or []
+    if not opts:
+        return (None, None, None)
+
+    # 1) Si es un número válido (1..N), úsalo como índice
+    if re.fullmatch(r"\d{1,2}", raw):
+        idx = int(raw) - 1
+        if 0 <= idx < len(opts):
+            opt = opts[idx]
+            return (
+                opt.get("saveAs") or None,
+                (opt.get("text") or "").strip(),
+                str(opt.get("nextId") or "")
+            )
+
+    # 2) Si no es número, intenta por texto (ignora emojis/números iniciales)
+    cleaned = _clean_option_text(raw).lower()
+    for opt in opts:
+        opt_text = _clean_option_text(opt.get("text") or "").lower()
+        if cleaned and cleaned in opt_text:
+            return (
+                opt.get("saveAs") or None,
+                (opt.get("text") or "").strip(),
+                str(opt.get("nextId") or "")
+            )
+
+    return (None, None, None)
+
 
 # ----------------------------------
 # Webhook Twilio
@@ -563,10 +632,15 @@ def webhook():
                 _reply(resp, f"❓ No entendí tu selección. Responde con el *número*.\n\n{txt}\n{opts}")
                 return str(resp), 200, {"Content-Type":"application/xml"}
 
-            # Hotfix: bloquea saltos a cámaras si el servicio no es cámaras
-            nextId = _fix_next_hop(sess, node, nextId)
+            nextId = _fix_next_hop(sess, node, nextId)  # hotfix “cámaras” → m2 si no aplica
 
             if saveAs: sess["data"][saveAs] = value
+            # Guardar nombre del servicio para el hotfix y para la cotización
+            if saveAs == "servicio":
+                sess["data"]["servicio"] = value
+            if saveAs == "subservicio":
+                sess["data"]["subservicio"] = value
+
             sess["node_id"] = nextId
             sess["awaiting_option_for"] = None
             sess["last_msg_sid"] = msg_sid
