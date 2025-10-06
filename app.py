@@ -688,7 +688,7 @@ def webhook():
         resp = MessagingResponse()
 
         if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches"}:
-            _reply(resp, "👋 Hola! Bienvenido a *Smart Plagas*. Escribe *reiniciar* para comenzar tu atención.")
+            _reply(resp, "👋 Hola! Bienvenido a *Smart Plagas*")
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         if body_lc == "reiniciar":
