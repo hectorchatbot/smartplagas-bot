@@ -1,12 +1,22 @@
 [
   { "id": 1748909520753, "type": "mensaje",
-    "content": "👋 Hola, bienvenido a SMART PLAGAS.", "variableName": "", "nextId": "1748909725738", "options": [] },
+    "content": "👋 ¡Hola! soy SmartBot, tu asistente virtual de SMART PLAGAS.
+Para ayudarte con una cotización, necesito algunos datos.", "variableName": "", "nextId": "1748909725738", "options": [] },
 
   { "id": 1748909725738, "type": "pregunta",
     "content": "¿Cómo te llamas?", "variableName": "nombre", "nextId": "1748909890368", "options": [] },
 
   { "id": 1748909890368, "type": "mensaje",
-    "content": "Hola {nombre}, encantado de conocerte.", "variableName": "", "nextId": "1748910006824", "options": [] },
+    "content": "Hola {nombre}, encantado de conocerte.", "variableName": "", "nextId": "1748910006855", "options": [] },
+
+  { "id": 1748910006855, "type": "condicional",
+    "content": "¿El servicio es para?", "variableName": "", "nextId": "",
+    "options": [
+      { "text": "1️⃣ 💼 Empresa u oficina", "saveAs": "tipo_cliente", "nextId": "1748910006824" },
+      { "text": "2️⃣ 🍽️ Restaurante / Local comercial",            "saveAs": "tipo_cliente", "nextId": "1748910006824" },
+      { "text": "3️⃣ 🏠 Casa particular",   "saveAs": "tipo_cliente", "nextId": "1748910006824" }
+      { "text": "4️⃣ 🏘️ Comunidad / Condominio",   "saveAs": "tipo_cliente", "nextId": "1748910006824" }
+    ]},
 
   { "id": 1748910006824, "type": "condicional",
     "content": "¿Qué deseas solucionar hoy con Smart Plagas?", "variableName": "", "nextId": "",
@@ -125,6 +135,6 @@
     "content": "¿Tu teléfono de contacto?", "variableName": "telefono", "nextId": "1748914057230", "options": [] },
 
   { "id": 1748914057230, "type": "mensaje",
-    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
+    "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📍 Tipo de Cliente: {tipo_cliente},\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
     "variableName": "", "options": [] }
 ]
