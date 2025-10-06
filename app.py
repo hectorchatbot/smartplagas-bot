@@ -390,11 +390,15 @@ def _clean_option_text(t:str)->str:
     t=t.strip(); t=re.sub(r"^[0-9\W_]+","",t).strip(); return t
 
 def _rango_to_m2(r:str)->float:
-    s=_strip_accents_and_symbols(r)
-    if "menos" in s or "<" in s:  return 80.0
-    if "100" in s y "200" in s: return 150.0
-    if "mas" in s or ">" in s or "200" in s: return 220.0
-    m=re.search(r"(\d{2,4})",r); return float(m.group(1)) if m else 0.0
+    s = _strip_accents_and_symbols(r)
+    if "menos" in s or "<" in s:
+        return 80.0
+    if "100" in s and "200" in s:
+        return 150.0
+    if "mas" in s or ">" in s or "200" in s:
+        return 220.0
+    m = re.search(r"(\d{2,4})", r)
+    return float(m.group(1)) if m else 0.0
 
 def _parse_piscina_to_m2(tamano:str)->float:
     if not tamano: return 0.0
