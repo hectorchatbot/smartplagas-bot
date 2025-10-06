@@ -28,11 +28,43 @@ def add_cors_headers(resp):
 # ------------------------------
 # Redis (estado de sesión + dedupe)
 # ------------------------------
-REDIS_URL = (os.getenv("REDIS_URL") or "").strip()
-if not REDIS_URL:
-    raise RuntimeError("Falta REDIS_URL en variables de entorno")
+def _obtener_redis_url():
+    # Prioriza las variables más comunes
+    for key in ("REDIS_URL", "UPSTASH_REDIS_URL", "REDIS_TLS_URL", "RAILWAY_REDIS_URL"):
+        v = os.getenv(key)
+        if v and v.strip():
+            return v.strip()
 
-_r = redis.from_url(REDIS_URL, decode_responses=True)
+    # Construye desde partes si existen
+    host = os.getenv("REDIS_HOST")
+    port = os.getenv("REDIS_PORT")
+    pwd  = os.getenv("REDIS_PASSWORD")
+    if host and port and pwd:
+        esquema = "rediss" if os.getenv("REDIS_SSL", "true").lower() in ("1", "true", "yes") else "redis"
+        return f"{esquema}://default:{pwd}@{host}:{port}"
+
+    return None
+
+REDIS_URL = _obtener_redis_url()
+_r = None
+
+def _conectar_redis():
+    url = REDIS_URL
+    if not url:
+        app.logger.info("REDIS_URL no definida. Continuando sin Redis.")
+        return None
+
+    use_ssl = url.startswith("rediss://")  # Upstash requiere TLS
+    try:
+        cli = redis.from_url(url, decode_responses=True, ssl=use_ssl)
+        cli.ping()  # valida conexión
+        app.logger.info("Conectado a Redis correctamente.")
+        return cli
+    except Exception as e:
+        app.logger.warning(f"No se pudo conectar a Redis ({url}): {e}. Continuando sin Redis.")
+        return None
+
+_r = _conectar_redis()
 
 def _sess_key(form: dict) -> str:
     waid = (form.get("WaId") or "").strip()
@@ -41,22 +73,29 @@ def _sess_key(form: dict) -> str:
     return (form.get("From") or "").replace("whatsapp:", "").strip()
 
 def _sess_get(key: str):
+    if not _r:
+        return None
     v = _r.get(f"sess:{key}")
     return json.loads(v) if v else None
 
 def _sess_set(key: str, val: dict, ttl_sec: int = 60*60*12):
+    if not _r:
+        return None
     _r.set(f"sess:{key}", json.dumps(val), ex=ttl_sec)
 
 def _sess_exists(key: str) -> bool:
+    if not _r:
+        return False
     return _r.exists(f"sess:{key}") == 1
 
 DEDUP_TTL = 300  # 5 min
 def _dedup_should_process(msg_sid: str) -> bool:
-    if not msg_sid:
+    if not _r or not msg_sid:
+        # Sin Redis o sin SID → procesa siempre (modo stateless)
         return True
-    # set NX -> true si no existía (procesamos), false si duplicado
     ok = _r.set(f"dedup:{msg_sid}", "1", nx=True, ex=DEDUP_TTL)
     return bool(ok)
+
 
 # ----------------------------------
 # Entorno / Twilio
@@ -526,6 +565,15 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
 # Rutas
 # ----------------------------------
 @app.get("/")
+@app.get("/redis-ping")
+def redis_ping():
+    if not _r:
+        return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
+    try:
+        return jsonify(ok=True, pong=_r.ping()), 200
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
 def health():
     return jsonify(ok=True, service="smartplagas-bot", time=datetime.datetime.utcnow().isoformat()+"Z")
 
