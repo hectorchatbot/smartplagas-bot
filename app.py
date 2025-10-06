@@ -498,44 +498,45 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
         varname = (node.get("variableName") or "").strip()
         nextId  = str(node.get("nextId") or "")
 
-                        if ntype == "mensaje":
-            # Enviar el texto del nodo (plantillas con {variables} soportadas)
+        # ----- MENSAJE -----
+        if ntype == "mensaje":
             _reply(resp, _render_template_text(content, sess["data"]))
-
-            # Si no hay siguiente nodo, simplemente terminamos SIN mensaje extra
             if not nextId:
                 if skey:
-                    _sess_set(skey, sess)  # guardamos último estado por prolijidad
+                    _sess_set(skey, sess)
                 return "final"
-
-            # Si hay siguiente, avanzamos
             sess["node_id"] = nextId
             if skey:
                 _sess_set(skey, sess)
             continue
 
-
+        # ----- PREGUNTA -----
         elif ntype == "pregunta":
             _reply(resp, _render_template_text(content, sess["data"]))
             sess["last_question"]   = varname if varname else None
             sess["pending_next_id"] = nextId if nextId else None
             sess.pop("awaiting_option_for", None)
-            if skey: _sess_set(skey, sess)
+            if skey:
+                _sess_set(skey, sess)
             return "wait_input"
 
+        # ----- CONDICIONAL -----
         elif ntype == "condicional":
-            txt=_render_template_text(content, sess["data"])
-            opts=_present_options(node)
+            txt = _render_template_text(content, sess["data"])
+            opts = _present_options(node)
             _reply(resp, f"{txt}\n{opts}" if opts else txt)
             sess["awaiting_option_for"] = node["id"]
             sess["last_question"] = None
             sess["pending_next_id"] = None
-            if skey: _sess_set(skey, sess)
+            if skey:
+                _sess_set(skey, sess)
             return "wait_option"
 
+        # ----- DESCONOCIDO -----
         else:
             _reply(resp, "⚠️ Tipo de bloque no reconocido.")
-            if skey: _sess_set(skey, sess)
+            if skey:
+                _sess_set(skey, sess)
             return "stop"
 
 # ----------------------------------
