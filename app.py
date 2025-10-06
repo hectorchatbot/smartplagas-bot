@@ -29,13 +29,11 @@ def add_cors_headers(resp):
 # Redis (estado de sesión + dedupe)
 # ------------------------------
 def _obtener_redis_url():
-    # Prioriza las variables más comunes
     for key in ("REDIS_URL", "UPSTASH_REDIS_URL", "REDIS_TLS_URL", "RAILWAY_REDIS_URL"):
         v = os.getenv(key)
         if v and v.strip():
             return v.strip()
 
-    # Construye desde partes si existen
     host = os.getenv("REDIS_HOST")
     port = os.getenv("REDIS_PORT")
     pwd  = os.getenv("REDIS_PASSWORD")
@@ -48,20 +46,15 @@ def _obtener_redis_url():
 REDIS_URL = _obtener_redis_url()
 _r = None
 
-_r = None  # ← asegúrate de que esta línea esté antes
-
 def _conectar_redis():
     url = (REDIS_URL or "").strip()
     if not url:
         app.logger.info("REDIS_URL no definida. Continuando sin Redis.")
         return None
 
-    # Solo para logging: Upstash usa TLS si empieza con rediss://
     use_ssl = url.startswith("rediss://")
-
     try:
         cli = redis.from_url(url, decode_responses=True)
-        # valida conexión
         cli.ping()
         estado = "SSL activo" if use_ssl else "sin SSL"
         app.logger.info(f"Conectado a Redis correctamente ({estado}).")
@@ -70,7 +63,6 @@ def _conectar_redis():
         app.logger.warning(f"No se pudo conectar a Redis ({url}): {e}. Continuando sin Redis.")
         return None
 
-# inicializa el cliente global
 _r = _conectar_redis()
 
 def _sess_key(form: dict) -> str:
@@ -98,11 +90,9 @@ def _sess_exists(key: str) -> bool:
 DEDUP_TTL = 300  # 5 min
 def _dedup_should_process(msg_sid: str) -> bool:
     if not _r or not msg_sid:
-        # Sin Redis o sin SID → procesa siempre (modo stateless)
         return True
     ok = _r.set(f"dedup:{msg_sid}", "1", nx=True, ex=DEDUP_TTL)
     return bool(ok)
-
 
 # ----------------------------------
 # Entorno / Twilio
@@ -399,43 +389,10 @@ def _present_options(node):
 def _clean_option_text(t:str)->str:
     t=t.strip(); t=re.sub(r"^[0-9\W_]+","",t).strip(); return t
 
-def _choose_option(node: dict, user_text: str):
-    """
-    Devuelve (saveAs, value, nextId) según la opción elegida.
-    Acepta números (“1”, “1)”, “1.”) o texto aproximado.
-    """
-    opts = node.get("options", []) or []
-    if not opts:
-        return "", "", ""
-    raw = (user_text or "").strip()
-
-    # 1) Selección por número (al inicio del mensaje)
-    m = re.match(r"^\D*?(\d+)", raw)
-    if m:
-        idx = int(m.group(1))
-        if 1 <= idx <= len(opts):
-            opt = opts[idx-1]
-            saveAs = (opt.get("saveAs") or "").strip()
-            value  = _clean_option_text(opt.get("text",""))
-            nextId = str(opt.get("nextId") or "")
-            return saveAs, value, nextId
-
-    # 2) Coincidencia por texto "relajada"
-    norm = _strip_accents_and_symbols(raw)
-    for opt in opts:
-        ot = _strip_accents_and_symbols(opt.get("text", ""))
-        if ot and (norm == ot or norm in ot or ot in norm):
-            saveAs = (opt.get("saveAs") or "").strip()
-            value  = _clean_option_text(opt.get("text",""))
-            nextId = str(opt.get("nextId") or "")
-            return saveAs, value, nextId
-
-    return "", "", ""
-
 def _rango_to_m2(r:str)->float:
     s=_strip_accents_and_symbols(r)
     if "menos" in s or "<" in s:  return 80.0
-    if "100" in s and "200" in s: return 150.0
+    if "100" in s y "200" in s: return 150.0
     if "mas" in s or ">" in s or "200" in s: return 220.0
     m=re.search(r"(\d{2,4})",r); return float(m.group(1)) if m else 0.0
 
@@ -452,8 +409,10 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
     label=f"{base} - {sub}" if sub else base
     m2=0.0
     if data.get("m2"):
-        try: m2=float(str(data["m2"]).replace(",", ".")); 
-        except Exception: m2=0.0
+        try:
+            m2=float(str(data["m2"]).replace(",", "."))
+        except Exception:
+            m2=0.0
     if not m2 and data.get("rango_m2"):       m2=_rango_to_m2(data["rango_m2"])
     if not m2 and data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
     serv_precio=_canon_servicio_para_precios(label)
@@ -581,6 +540,7 @@ def redis_ping():
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
+@app.get("/health")
 def health():
     return jsonify(ok=True, service="smartplagas-bot", time=datetime.datetime.utcnow().isoformat()+"Z")
 
@@ -592,58 +552,22 @@ def files(filename):
 def generate():
     return handle_generate()
 
-def _choose_option(node: dict, user_input: str):
-    """
-    Dado un nodo 'condicional' y el texto ingresado por el usuario, retorna
-    (saveAs, value, nextId).
-    - user_input puede ser "1", "2", "3" o el texto de la opción.
-    - Si no matchea ninguna opción, retorna (None, None, None).
-    """
-    if not node or node.get("type") != "condicional":
-        return (None, None, None)
-
-    raw = (user_input or "").strip()
-    opts = node.get("options", []) or []
-    if not opts:
-        return (None, None, None)
-
-    # 1) Si es un número válido (1..N), úsalo como índice
-    if re.fullmatch(r"\d{1,2}", raw):
-        idx = int(raw) - 1
-        if 0 <= idx < len(opts):
-            opt = opts[idx]
-            return (
-                opt.get("saveAs") or None,
-                (opt.get("text") or "").strip(),
-                str(opt.get("nextId") or "")
-            )
-
-    # 2) Si no es número, intenta por texto (ignora emojis/números iniciales)
-    cleaned = _clean_option_text(raw).lower()
-    for opt in opts:
-        opt_text = _clean_option_text(opt.get("text") or "").lower()
-        if cleaned and cleaned in opt_text:
-            return (
-                opt.get("saveAs") or None,
-                (opt.get("text") or "").strip(),
-                str(opt.get("nextId") or "")
-            )
-
-    return (None, None, None)
-
 # ----------------------------------
-# Selección de opciones (condicional)
+# Selección de opciones (condicional) — versión única
 # ----------------------------------
 def _choose_option(node, body):
     """
     Determina qué opción del nodo condicional eligió el usuario.
     Retorna (saveAs, value, nextId)
     """
+    if not node or node.get("type") != "condicional":
+        return (None, None, None)
+
     opts = node.get("options", []) or []
     if not opts:
         return (None, None, None)
 
-    # 1️⃣ Si el mensaje es un número válido dentro del rango de opciones
+    # 1) si el mensaje contiene un número válido dentro del rango
     try:
         num = int(re.sub(r"\D", "", body))
         if 1 <= num <= len(opts):
@@ -656,10 +580,10 @@ def _choose_option(node, body):
     except Exception:
         pass
 
-    # 2️⃣ Si no es número, busca coincidencia por texto (ignorando emojis y números)
-    cleaned = _clean_option_text(body)
+    # 2) por texto (limpiando emojis y numeraciones)
+    cleaned = _clean_option_text(body).lower()
     for opt in opts:
-        opt_text = _clean_option_text(opt.get("text") or "")
+        opt_text = _clean_option_text(opt.get("text") or "").lower()
         if cleaned and cleaned in opt_text:
             return (
                 opt.get("saveAs") or None,
@@ -680,6 +604,7 @@ def webhook():
         body_lc = body.lower()
         msg_sid = (data.get("MessageSid") or "").strip()
 
+        # dedupe de mensajes
         if not _dedup_should_process(msg_sid):
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
@@ -687,45 +612,56 @@ def webhook():
         from_wa = data.get("From","").strip()
         resp = MessagingResponse()
 
+        # 1) SALUDO: dispara el primer nodo del flujo
         if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches"}:
-            # En la parte superior ya debes tener cargado el flujo:
-# FLOW = json.load(open(FLOW_PATH, "r", encoding="utf-8"))
-# Construye un índice por id (hazlo una sola vez):
-FLOW_IDX = {str(n["id"]): n for n in FLOW}
-FIRST_ID = "1748909520753"  # tu primer nodo (saludo desde JSON)
-
-# ... en lugar del saludo hardcodeado:
-node = FLOW_IDX.get(FIRST_ID)
-if node:
-    _reply(resp, node.get("content", ""))   # envía el saludo del JSON
-    # Si quieres adelantar el estado al siguiente nodo:
-    next_id = node.get("nextId")
-    if next_id:
-        save_state(user_key, node_id=next_id)  # tu función/redis según uses
-else:
-    _reply(resp, "Hola, iniciemos tu atención.")  # fallback
-
+            sess = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None,
+                "last_msg_sid": msg_sid
+            }
+            _sess_set(skey, sess)
+            _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
+        # 2) Reinicio explícito
         if body_lc == "reiniciar":
-            _sess_set(skey, {"node_id": FIRST_NODE_ID, "data": {}, "last_question": None,
-                             "pending_next_id": None, "awaiting_option_for": None, "last_msg_sid": msg_sid})
-            _reply(resp, "🔄 Flujo reiniciado correctamente. Iniciando atención...")
-            _advance_flow_until_input(resp, _sess_get(skey), skey)
+            sess = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None,
+                "last_msg_sid": msg_sid
+            }
+            _sess_set(skey, sess)
+            _reply(resp, "🔄 Flujo reiniciado. Iniciando atención…")
+            _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
+        # 3) Si no hay sesión, crearla y avanzar
         if not _sess_exists(skey):
-            _sess_set(skey, {"node_id": FIRST_NODE_ID, "data": {}, "last_question": None,
-                             "pending_next_id": None, "awaiting_option_for": None, "last_msg_sid": None})
-            _advance_flow_until_input(resp, _sess_get(skey), skey)
+            sess = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None,
+                "last_msg_sid": None
+            }
+            _sess_set(skey, sess)
+            _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         sess = _sess_get(skey)
 
+        # evita reprocesar el mismo MessageSid
         if msg_sid and sess.get("last_msg_sid") == msg_sid:
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
-        # Selección de opción
+        # 4) Selección de opción (nodo condicional)
         if sess.get("awaiting_option_for"):
             node_id = str(sess["awaiting_option_for"])
             node = FLOW_INDEX.get(node_id)
@@ -740,10 +676,9 @@ else:
                 _reply(resp, f"❓ No entendí tu selección. Responde con el *número*.\n\n{txt}\n{opts}")
                 return str(resp), 200, {"Content-Type":"application/xml"}
 
-            nextId = _fix_next_hop(sess, node, nextId)  # hotfix “cámaras” → m2 si no aplica
+            nextId = _fix_next_hop(sess, node, nextId)
 
             if saveAs: sess["data"][saveAs] = value
-            # Guardar nombre del servicio para el hotfix y para la cotización
             if saveAs == "servicio":
                 sess["data"]["servicio"] = value
             if saveAs == "subservicio":
@@ -756,7 +691,7 @@ else:
             _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        # Respuesta a pregunta
+        # 5) Respuesta a pregunta (nodo pregunta)
         if sess.get("last_question"):
             var = sess["last_question"]
             sess["data"][var] = body
@@ -776,6 +711,7 @@ else:
             else: _reply(resp, "Gracias. Escribe *reiniciar* si deseas empezar otra solicitud.")
             return str(resp), 200, {"Content-Type":"application/xml"}
 
+        # 6) Mensaje libre fuera de contexto
         _reply(resp, "🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
         return str(resp), 200, {"Content-Type":"application/xml"}
 
