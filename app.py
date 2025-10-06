@@ -56,7 +56,7 @@ def _conectar_redis():
 
     use_ssl = url.startswith("rediss://")  # Upstash requiere TLS
     try:
-        cli = redis.from_url(url, decode_responses=True, ssl=use_ssl)
+       cli = redis.from_url(url, decode_responses=True)
         cli.ping()  # valida conexión
         app.logger.info("Conectado a Redis correctamente.")
         return cli
