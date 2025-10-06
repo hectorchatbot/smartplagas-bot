@@ -499,14 +499,16 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
         nextId  = str(node.get("nextId") or "")
 
         if ntype == "mensaje":
-            _reply(resp, _render_template_text(content, sess["data"]))
-            if not nextId:
-                _reply(resp, "✅ Gracias por tu tiempo. Si deseas iniciar otro servicio, escribe *reiniciar*.")
-                if skey: _sess_set(skey, sess)
-                return "final"
-            sess["node_id"] = nextId
-            if skey: _sess_set(skey, sess)
-            continue
+    _reply(resp, _render_template_text(content, sess["data"]))
+    if not nextId:
+        # Se eliminó el mensaje de cierre automático
+        if skey: 
+            _sess_set(skey, sess)
+        return "final"
+    sess["node_id"] = nextId
+    if skey: 
+        _sess_set(skey, sess)
+    continue
 
         elif ntype == "pregunta":
             _reply(resp, _render_template_text(content, sess["data"]))
