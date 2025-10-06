@@ -498,17 +498,22 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
         varname = (node.get("variableName") or "").strip()
         nextId  = str(node.get("nextId") or "")
 
-        if ntype == "mensaje":
-    _reply(resp, _render_template_text(content, sess["data"]))
-    if not nextId:
-        # Se eliminó el mensaje de cierre automático
-        if skey: 
-            _sess_set(skey, sess)
-        return "final"
-    sess["node_id"] = nextId
-    if skey: 
-        _sess_set(skey, sess)
-    continue
+                        if ntype == "mensaje":
+            # Enviar el texto del nodo (plantillas con {variables} soportadas)
+            _reply(resp, _render_template_text(content, sess["data"]))
+
+            # Si no hay siguiente nodo, simplemente terminamos SIN mensaje extra
+            if not nextId:
+                if skey:
+                    _sess_set(skey, sess)  # guardamos último estado por prolijidad
+                return "final"
+
+            # Si hay siguiente, avanzamos
+            sess["node_id"] = nextId
+            if skey:
+                _sess_set(skey, sess)
+            continue
+
 
         elif ntype == "pregunta":
             _reply(resp, _render_template_text(content, sess["data"]))
