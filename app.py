@@ -576,6 +576,43 @@ def _choose_option(node: dict, user_input: str):
 
     return (None, None, None)
 
+# ----------------------------------
+# Selección de opciones (condicional)
+# ----------------------------------
+def _choose_option(node, body):
+    """
+    Determina qué opción del nodo condicional eligió el usuario.
+    Retorna (saveAs, value, nextId)
+    """
+    opts = node.get("options", []) or []
+    if not opts:
+        return (None, None, None)
+
+    # 1️⃣ Si el mensaje es un número válido dentro del rango de opciones
+    try:
+        num = int(re.sub(r"\D", "", body))
+        if 1 <= num <= len(opts):
+            opt = opts[num - 1]
+            return (
+                opt.get("saveAs") or None,
+                (opt.get("text") or "").strip(),
+                str(opt.get("nextId") or "")
+            )
+    except Exception:
+        pass
+
+    # 2️⃣ Si no es número, busca coincidencia por texto (ignorando emojis y números)
+    cleaned = _clean_option_text(body)
+    for opt in opts:
+        opt_text = _clean_option_text(opt.get("text") or "")
+        if cleaned and cleaned in opt_text:
+            return (
+                opt.get("saveAs") or None,
+                (opt.get("text") or "").strip(),
+                str(opt.get("nextId") or "")
+            )
+
+    return (None, None, None)
 
 # ----------------------------------
 # Webhook Twilio

@@ -5,6 +5,8 @@ docxtpl>=0.16
 Jinja2>=3
 lxml>=4.9
 gunicorn>=21
+Flask-Session==0.5.0
+redis==5.0.7
 
 # Solo en Windows o macOS (para desarrollo local con Word)
 docx2pdf; sys_platform == "win32" or sys_platform == "darwin"
