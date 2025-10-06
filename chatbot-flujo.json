@@ -20,8 +20,8 @@
       { "text": "4️⃣ 🏘️ Comunidad / Condominio", "saveAs": "servicio", "nextId": "1748910006824" }
     ]},
 
-  { "id": 1748910006824, "type": "condicional (Escriba 1, 2, 3)",
-    "content": "¿Qué deseas solucionar hoy con Smart Plagas?", "variableName": "", "nextId": "",
+  { "id": 1748910006824, "type": "condicional",
+    "content": "¿Qué deseas solucionar hoy con Smart Plagas? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ 🐜 Control de Plagas", "saveAs": "servicio", "nextId": "1748910215188" },
       { "text": "2️⃣ 🏊 Piscinas", "saveAs": "servicio", "nextId": "1748912457487" },
