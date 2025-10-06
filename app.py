@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- 
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -100,7 +100,17 @@ def _dedup_should_process(msg_sid: str) -> bool:
 TW_SID   = os.getenv("TWILIO_ACCOUNT_SID", "")
 TW_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TW_FROM  = os.getenv("TWILIO_WHATSAPP_FROM") or os.getenv("TWILIO_PHONE_NUMBER") or "whatsapp:+14155238886"
-ADMIN_WA = os.getenv("ADMIN_WHATSAPP") or os.getenv("MY_PHONE_NUMBER") or ""
+
+# Admin: toma de .env o usa valor por defecto solicitado
+ADMIN_WA = (
+    os.getenv("ADMIN_WA")
+    or os.getenv("ADMIN_WHATSAPP")
+    or os.getenv("MY_PHONE_NUMBER")
+    or "whatsapp:+56995300790"
+).strip()
+
+# Habilitar/deshabilitar envío por WhatsApp
+TWILIO_ENABLED = (os.getenv("TWILIO_ENABLED", "true").lower() == "true")
 
 BASE_URL = (os.getenv("BASE_URL") or os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 
@@ -114,6 +124,9 @@ TEMPLATE_DOCX = os.getenv("TEMPLATE_DOCX", os.path.join(BASE_DIR, "templates", "
 SEND_PDF    = (os.getenv("SEND_PDF_TO_CLIENT", "true").lower() == "true")
 SEND_DOC    = (os.getenv("SEND_DOC_TO_CLIENT", "false").lower() == "true")
 MEDIA_DELAY = float(os.getenv("MEDIA_DELAY_SECONDS", "1.0"))
+
+# Copia al admin (permite forzar envío)
+SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
@@ -240,10 +253,25 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
     })
     tpl.save(path)
 
-def send_whatsapp_media_only_pdf(to_wa: str, caption: str, pdf_url: str, delay: float = MEDIA_DELAY):
+# ----------------------------------
+# Envío WhatsApp helpers
+# ----------------------------------
+def send_whatsapp_text(to_wa: str, body: str, delay: float = 0.0):
     result = {}
-    if not (twilio and to_wa and pdf_url):
-        result["warn"]="twilio_or_params_missing"; return result
+    if not (twilio and TWILIO_ENABLED and to_wa and body):
+        result["warn"] = "twilio_or_params_missing_or_disabled"; return result
+    try:
+        time.sleep(max(0.0, delay))
+        msg = twilio.messages.create(from_=TW_FROM, to=to_wa, body=body)
+        result["sid"] = msg.sid
+    except Exception as e:
+        result["error"] = str(e)
+    return result
+
+def send_whatsapp_media_only_pdf(to_wa: str, caption: str, pdf_url: str, delay: float = 0.0):
+    result = {}
+    if not (twilio and TWILIO_ENABLED and to_wa and pdf_url):
+        result["warn"]="twilio_or_params_missing_or_disabled"; return result
     try:
         time.sleep(max(0.0, delay))
         msg = twilio.messages.create(from_=TW_FROM, to=to_wa, body=caption, media_url=[pdf_url])
@@ -251,6 +279,23 @@ def send_whatsapp_media_only_pdf(to_wa: str, caption: str, pdf_url: str, delay: 
     except Exception as e:
         result["error"] = str(e)
     return result
+
+def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
+    """
+    1) Envía resumen al admin
+    2) Envía PDF como adjunto (si hay)
+    3) Envía mensaje con enlace al DOCX (si hay)
+    """
+    if not (ADMIN_WA and TWILIO_ENABLED and twilio):
+        return {"warn": "admin_or_twilio_not_configured"}
+    sids = {}
+    if resumen_texto:
+        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "🧾 *Nueva cotización*\n\n" + resumen_texto, delay=0.0)
+    if pdf_url:
+        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📎 PDF de la cotización", pdf_url, delay=MEDIA_DELAY)
+    if docx_url:
+        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+    return sids
 
 # ----------------------------------
 # Normalización payload externo
@@ -343,10 +388,15 @@ def handle_generate():
     resumen = "".join(partes)
 
     sids = {}
+    # Enviar al cliente (si hay número)
     if info["to_whatsapp"] and SEND_PDF:
-        sids["client"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
-    if ADMIN_WA and SEND_PDF:
-        sids["admin"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📣 Copia interna\n\n"+resumen, pdf_url, MEDIA_DELAY)
+        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
+        if SEND_DOC:
+            send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+
+    # Copia al admin (resumen + pdf + enlace docx)
+    if SEND_COPY_TO_ADMIN and ADMIN_WA:
+        sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
                    to_wa=info["to_whatsapp"], twilio=sids), 200
@@ -463,15 +513,22 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
          f"📄 *DOCX:* {docx_url}\n\n"
          f"¿Te agendo una visita esta semana? Responde *SI* o *NO*.")
     _reply(resp, msg)
+
+    # Cliente: PDF adjunto (y opcionalmente DOCX como link)
     if SEND_PDF and info.get("to_whatsapp"):
         send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
-    if SEND_PDF and ADMIN_WA:
-        resumen_admin=("📣 Copia interna\n"
-                       f"Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
-                       f"Servicio: {info['servicio_label']} | m2: {info['m2']}\n"
-                       f"Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
-                       f"Total: {total_txt}")
-        send_whatsapp_media_only_pdf(ADMIN_WA, resumen_admin, pdf_url, MEDIA_DELAY)
+        if SEND_DOC:
+            send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+
+    # Admin: resumen + PDF + enlace al DOCX
+    if SEND_COPY_TO_ADMIN and ADMIN_WA:
+        resumen_admin=(
+            f"👤 Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
+            f"🧰 Servicio: {info['servicio_label']} | m2: {info['m2']}\n"
+            f"📍 Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
+            f"💵 Total (estimado): {total_txt}"
+        )
+        send_admin_copy(resumen_admin, pdf_url, docx_url)
 
 # ---- Cortafuegos de saltos imposibles (hotfix) ---------------------
 CAMERA_NODE_IDS = {
