@@ -8,7 +8,7 @@ from docxtpl import DocxTemplate
 import redis
 
 logging.basicConfig(level=logging.INFO)
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 # ------------------------------
 # App + CORS
