@@ -12,7 +12,7 @@
     "variableName": "", "nextId": "1748910006855", "options": [] },
 
   { "id": 1748910006855, "type": "condicional",
-    "content": "¿El servicio es para?", "variableName": "", "nextId": "",
+    "content": "¿El servicio es para? (Escriba 1, 2, 3 o 4)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ 💼 Empresa u oficina", "saveAs": "servicio", "nextId": "1748910006824" },
       { "text": "2️⃣ 🍽️ Restaurante / Local comercial", "saveAs": "servicio", "nextId": "1748910006824" },
@@ -20,7 +20,7 @@
       { "text": "4️⃣ 🏘️ Comunidad / Condominio", "saveAs": "servicio", "nextId": "1748910006824" }
     ]},
 
-  { "id": 1748910006824, "type": "condicional",
+  { "id": 1748910006824, "type": "condicional (Escriba 1, 2, 3)",
     "content": "¿Qué deseas solucionar hoy con Smart Plagas?", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ 🐜 Control de Plagas", "saveAs": "servicio", "nextId": "1748910215188" },
@@ -29,7 +29,7 @@
     ]},
 
   { "id": 1748910215188, "type": "condicional",
-    "content": "¿En qué servicio de Control de Plagas?", "variableName": "", "nextId": "",
+    "content": "¿En qué servicio de Control de Plagas? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ 🐀 Desratización", "saveAs": "subservicio", "nextId": "1748911338220" },
       { "text": "2️⃣ 🐜🕷️ Desinsectación", "saveAs": "subservicio", "nextId": "1748912010712" },
@@ -37,7 +37,7 @@
     ]},
 
   { "id": 1748911338220, "type": "condicional",
-    "content": "¿Qué servicio de desratización requiere?", "variableName": "", "nextId": "",
+    "content": "¿Qué servicio de desratización requiere? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Interior", "saveAs": "subarea", "nextId": "1748911555017" },
       { "text": "2️⃣ Exterior", "saveAs": "subarea", "nextId": "1748911555017" },
@@ -45,7 +45,7 @@
     ]},
 
   { "id": 1748912010712, "type": "condicional",
-    "content": "¿Qué servicio de desinsectación requiere?", "variableName": "", "nextId": "",
+    "content": "¿Qué servicio de desinsectación requiere? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Interior", "saveAs": "subarea", "nextId": "1748911555017" },
       { "text": "2️⃣ Exterior", "saveAs": "subarea", "nextId": "1748911555017" },
@@ -53,7 +53,7 @@
     ]},
 
   { "id": 1748912322554, "type": "condicional",
-    "content": "¿Qué servicio de sanitización requiere?", "variableName": "", "nextId": "",
+    "content": "¿Qué servicio de sanitización requiere? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Interior", "saveAs": "subarea", "nextId": "1748911555017" },
       { "text": "2️⃣ Exterior", "saveAs": "subarea", "nextId": "1748911555017" },
@@ -61,7 +61,7 @@
     ]},
 
   { "id": 1748911555017, "type": "condicional",
-    "content": "¿De cuántos metros cuadrados totales es el lugar donde desea los servicios?", "variableName": "", "nextId": "",
+    "content": "¿De cuántos metros cuadrados totales es el lugar donde desea los servicios? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Menos de 100 m2", "saveAs": "rango_m2", "nextId": "1748911698499" },
       { "text": "2️⃣ De 100 a 200 m2", "saveAs": "rango_m2", "nextId": "1748911698499" },
@@ -69,7 +69,7 @@
     ]},
 
   { "id": 1748912457487, "type": "condicional",
-    "content": "¿Qué servicio de piscina requiere?", "variableName": "", "nextId": "",
+    "content": "¿Qué servicio de piscina requiere? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Tratamiento", "saveAs": "subservicio", "nextId": "1748912789732" },
       { "text": "2️⃣ Mantención bomba", "saveAs": "subservicio", "nextId": "1748912789732" },
@@ -77,7 +77,7 @@
     ]},
 
   { "id": 1748912789732, "type": "condicional",
-    "content": "Indique qué tipo de material es la piscina", "variableName": "", "nextId": "",
+    "content": "Indique qué tipo de material es la piscina (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Baldosa", "saveAs": "tipo_material", "nextId": "1748912906346" },
       { "text": "2️⃣ Concreto", "saveAs": "tipo_material", "nextId": "1748912906346" },
@@ -85,7 +85,7 @@
     ]},
 
   { "id": 1748913058876, "type": "condicional",
-    "content": "¿Número de cámaras que desea instalar?", "variableName": "", "nextId": "",
+    "content": "¿Número de cámaras que desea instalar? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ 1 - 2", "saveAs": "cantidad_camara", "nextId": "1748913223390" },
       { "text": "2️⃣ 3 - 5", "saveAs": "cantidad_camara", "nextId": "1748913223390" },
@@ -93,7 +93,7 @@
     ]},
 
   { "id": 1748913223390, "type": "condicional",
-    "content": "¿Qué tipo de cámara deseas instalar?", "variableName": "", "nextId": "",
+    "content": "¿Qué tipo de cámara deseas instalar? (Escriba 1, 2, 3 o 4)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ 📡 Alámbricas – Requieren cableado", "saveAs": "tipo_camara", "nextId": "1748913354726" },
       { "text": "2️⃣ 📶 Inalámbricas – Se conectan por WiFi", "saveAs": "tipo_camara", "nextId": "1748913354726" },
@@ -106,7 +106,7 @@
     "variableName": "area_vigilar", "nextId": "1748913446918", "options": [] },
 
   { "id": 1748913446918, "type": "condicional",
-    "content": "¿Podrías tener acceso remoto desde celular o PC una vez instalado el sistema?", "variableName": "", "nextId": "",
+    "content": "¿Podrías tener acceso remoto desde celular o PC una vez instalado el sistema? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
     "options": [
       { "text": "1️⃣ Sí", "saveAs": "acceso_remoto", "nextId": "1748913856796" },
       { "text": "2️⃣ No", "saveAs": "acceso_remoto", "nextId": "1748913856796" },
