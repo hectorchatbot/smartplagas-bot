@@ -1,21 +1,23 @@
 [
   { "id": 1748909520753, "type": "mensaje",
-    "content": "👋 ¡Hola! soy SmartBot, tu asistente virtual de SMART PLAGAS.\nPara ayudarte con una cotización, necesito algunos datos.",
+    "content": "👋 ¡Hola! soy SmartBot, asistente de SMART PLAGAS.\nTe ayudo con cotizaciones y agendamientos.",
     "variableName": "", "nextId": "1748909725738", "options": [] },
 
   { "id": 1748909725738, "type": "pregunta",
-    "content": "¿Cómo te llamas?", "variableName": "nombre", "nextId": "1748909890368", "options": [] },
+    "content": "¿Cómo te llamas?", "variableName": "nombre",
+    "nextId": "1748909890368", "options": [] },
 
   { "id": 1748909890368, "type": "mensaje",
-    "content": "Hola {nombre}, encantado de conocerte.", "variableName": "", "nextId": "1748910006855", "options": [] },
+    "content": "Hola {nombre}, encantado de conocerte.",
+    "variableName": "", "nextId": "1748910006855", "options": [] },
 
   { "id": 1748910006855, "type": "condicional",
     "content": "¿El servicio es para?", "variableName": "", "nextId": "",
     "options": [
-      { "text": "1️⃣ 💼 Empresa u oficina", "saveAs": "servicio", "nextId": "1748910215188" },
-      { "text": "2️⃣ 🍽️ Restaurante / Local comercial", "saveAs": "servicio", "nextId": "1748912457487" },
-      { "text": "3️⃣ 🏠 Casa particular", "saveAs": "servicio", "nextId": "1748913058876" },
-      { "text": "4️⃣ 🏘️ Comunidad / Condominio", "saveAs": "servicio", "nextId": "1748913058876" }
+      { "text": "1️⃣ 💼 Empresa u oficina", "saveAs": "servicio", "nextId": "1748910006824" },
+      { "text": "2️⃣ 🍽️ Restaurante / Local comercial", "saveAs": "servicio", "nextId": "1748910006824" },
+      { "text": "3️⃣ 🏠 Casa particular", "saveAs": "servicio", "nextId": "1748910006824" },
+      { "text": "4️⃣ 🏘️ Comunidad / Condominio", "saveAs": "servicio", "nextId": "1748910006824" }
     ]},
 
   { "id": 1748910006824, "type": "condicional",
@@ -123,16 +125,20 @@
     "nextId": "1748911698499", "options": [] },
 
   { "id": 1748911698499, "type": "pregunta",
-    "content": "¿Cuál es tu dirección?", "variableName": "direccion", "nextId": "1748911780132", "options": [] },
+    "content": "¿Cuál es tu dirección?", "variableName": "direccion",
+    "nextId": "1748911780132", "options": [] },
 
   { "id": 1748911780132, "type": "pregunta",
-    "content": "¿En qué comuna vives?", "variableName": "comuna", "nextId": "1748911861762", "options": [] },
+    "content": "¿En qué comuna vives?", "variableName": "comuna",
+    "nextId": "1748911861762", "options": [] },
 
   { "id": 1748911861762, "type": "pregunta",
-    "content": "¿Cuál es tu email?", "variableName": "email", "nextId": "1748911937077", "options": [] },
+    "content": "¿Cuál es tu email?", "variableName": "email",
+    "nextId": "1748911937077", "options": [] },
 
   { "id": 1748911937077, "type": "pregunta",
-    "content": "¿Tu teléfono de contacto?", "variableName": "telefono", "nextId": "1748914057230", "options": [] },
+    "content": "¿Tu teléfono de contacto?", "variableName": "telefono",
+    "nextId": "1748914057230", "options": [] },
 
   { "id": 1748914057230, "type": "mensaje",
     "content": "🪤 ¡{nombre}, gracias por solicitar nuestros servicios!\n📍 Dirección: {direccion}, {comuna}\n📧 Email: {email}\n📞 Teléfono: {telefono}\n📩 Pronto recibirás tu *cotización personalizada*.\n🔎 Un asesor de Smart Plagas te contactará para confirmar detalles y programar la visita.\n☎ Atención urgente: +56 9 5816 6055.",
