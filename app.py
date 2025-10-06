@@ -48,22 +48,29 @@ def _obtener_redis_url():
 REDIS_URL = _obtener_redis_url()
 _r = None
 
+_r = None  # ← asegúrate de que esta línea esté antes
+
 def _conectar_redis():
-    url = REDIS_URL
+    url = (REDIS_URL or "").strip()
     if not url:
         app.logger.info("REDIS_URL no definida. Continuando sin Redis.")
         return None
 
-    use_ssl = url.startswith("rediss://")  # Upstash requiere TLS
+    # Solo para logging: Upstash usa TLS si empieza con rediss://
+    use_ssl = url.startswith("rediss://")
+
     try:
-       cli = redis.from_url(url, decode_responses=True)
-        cli.ping()  # valida conexión
-        app.logger.info("Conectado a Redis correctamente.")
+        cli = redis.from_url(url, decode_responses=True)
+        # valida conexión
+        cli.ping()
+        estado = "SSL activo" if use_ssl else "sin SSL"
+        app.logger.info(f"Conectado a Redis correctamente ({estado}).")
         return cli
     except Exception as e:
         app.logger.warning(f"No se pudo conectar a Redis ({url}): {e}. Continuando sin Redis.")
         return None
 
+# inicializa el cliente global
 _r = _conectar_redis()
 
 def _sess_key(form: dict) -> str:
