@@ -688,7 +688,23 @@ def webhook():
         resp = MessagingResponse()
 
         if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches"}:
-            _reply(resp, "👋 Hola! Bienvenido a *Smart Plagas*")
+            # En la parte superior ya debes tener cargado el flujo:
+# FLOW = json.load(open(FLOW_PATH, "r", encoding="utf-8"))
+# Construye un índice por id (hazlo una sola vez):
+FLOW_IDX = {str(n["id"]): n for n in FLOW}
+FIRST_ID = "1748909520753"  # tu primer nodo (saludo desde JSON)
+
+# ... en lugar del saludo hardcodeado:
+node = FLOW_IDX.get(FIRST_ID)
+if node:
+    _reply(resp, node.get("content", ""))   # envía el saludo del JSON
+    # Si quieres adelantar el estado al siguiente nodo:
+    next_id = node.get("nextId")
+    if next_id:
+        save_state(user_key, node_id=next_id)  # tu función/redis según uses
+else:
+    _reply(resp, "Hola, iniciemos tu atención.")  # fallback
+
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         if body_lc == "reiniciar":
