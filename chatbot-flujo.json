@@ -69,11 +69,13 @@
     ]},
 
   { "id": 1748912457487, "type": "condicional",
-    "content": "¿Qué servicio de piscina requiere? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
+    "content": "¿Qué servicio de piscina requiere? (Escriba 1, 2, 3, 4 o 5)", "variableName": "", "nextId": "",
     "options": [
-      { "text": "1️⃣ Tratamiento", "saveAs": "subservicio", "nextId": "1748912789732" },
-      { "text": "2️⃣ Mantención bomba", "saveAs": "subservicio", "nextId": "1748912789732" },
-      { "text": "3️⃣ Cambio arena filtro", "saveAs": "subservicio", "nextId": "1748912789732" }
+      { "text": "1️⃣ 🧰 Plan Intermedio: Tratamiento + Limpieza física", "saveAs": "subservicio", "nextId": "1748912789732" },
+      { "text": "2️⃣ ☀️ Shock / Cloración intensa", "saveAs": "subservicio", "nextId": "1748912789732" },
+      { "text": "3️⃣ ⚙️ Mantención bomba y filtro", "saveAs": "subservicio", "nextId": "1748912789732" },
+      { "text": "4️⃣ 🧪 Diagnóstico técnico", "saveAs": "subservicio", "nextId": "1748912789732" },
+      { "text": "5️⃣ 🏖️ Cambio de arena / carga filtrante", "saveAs": "subservicio", "nextId": "1748912789732" }
     ]},
 
   { "id": 1748912789732, "type": "condicional",
@@ -83,6 +85,14 @@
       { "text": "2️⃣ Concreto", "saveAs": "tipo_material", "nextId": "1748912906346" },
       { "text": "3️⃣ Fibra de vidrio", "saveAs": "tipo_material", "nextId": "1748912906346" }
     ]},
+
+  { "id": 1748912906346, "type": "pregunta",
+    "content": "Tamaño de la piscina en metros (Ej: 6x3)", "variableName": "tamano_piscina",
+    "nextId": "1749990100000", "options": [] },
+
+  { "id": 1749990100000, "type": "pregunta",
+    "content": "Profundidad promedio en metros (Ej.: 1.4). Si no sabes, responde 1.4",
+    "variableName": "profundidad", "nextId": "1748911698499", "options": [] },
 
   { "id": 1748913058876, "type": "condicional",
     "content": "¿Número de cámaras que desea instalar? (Escriba 1, 2, 3)", "variableName": "", "nextId": "",
@@ -119,10 +129,6 @@
       { "text": "1️⃣ Sí", "saveAs": "conexion_internet", "nextId": "1748911698499" },
       { "text": "2️⃣ No", "saveAs": "conexion_internet", "nextId": "1748911698499" }
     ]},
-
-  { "id": 1748912906346, "type": "pregunta",
-    "content": "Tamaño de la piscina en metros (Ej: 6x3)", "variableName": "tamano_piscina",
-    "nextId": "1748911698499", "options": [] },
 
   { "id": 1748911698499, "type": "pregunta",
     "content": "¿Cuál es tu dirección?", "variableName": "direccion",
