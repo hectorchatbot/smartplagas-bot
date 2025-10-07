@@ -153,12 +153,13 @@ def _strip_accents_and_symbols(text: str) -> str:
     t = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
     return re.sub(r"[^a-zA-Z0-9\s]", " ", t).lower().strip()
 
+# >>> NUEVO: normalizador robusto para comparar palabras (quita tildes/emojis)
 def _norm(s: str) -> str:
-    if not s: return ""
+    if not s:
+        return ""
     s = s.strip().lower()
+    s = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", s)  # emojis/dingbats
     s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-    # quita emojis / símbolos extra
-    s = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", s)
     return re.sub(r"\s+", " ", s).strip()
 
 def _canon_servicio_para_precios(servicio_humano: str) -> str:
@@ -167,20 +168,6 @@ def _canon_servicio_para_precios(servicio_humano: str) -> str:
     if "desinfecc" in s:  return "desinfeccion"
     if "desinsect" in s:  return "desinsectacion"
     return "desinsectacion"
-
-def _canon_servicio_choice(txt_opt: str, user_raw: str) -> str:
-    """Devuelve 'plagas' | 'piscinas' | 'camaras' | '' según texto o número del usuario."""
-    t = _norm(txt_opt)
-    u = _norm(user_raw)
-    # por número directo
-    if u == "1": return "plagas"
-    if u == "2": return "piscinas"
-    if u == "3": return "camaras"
-    # por texto
-    if "plaga" in t:   return "plagas"
-    if "piscin" in t:  return "piscinas"
-    if "camar" in t:   return "camaras"
-    return ""
 
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
@@ -465,7 +452,7 @@ def _rango_to_m2(r:str)->float:
     s = _strip_accents_and_symbols(r)
     if "menos" in s or "<" in s:
         return 80.0
-    if "100" in s and "200" in s:
+    if "100" in s y "200" in s:
         return 150.0
     if "mas" in s or ">" in s or "200" in s:
         return 220.0
@@ -489,8 +476,8 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
             m2=float(str(data["m2"]).replace(",", "."))
         except Exception:
             m2=0.0
-    if not m2 and data.get("rango_m2"):       m2=_rango_to_m2(data["rango_m2"])
-    if not m2 and data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
+    if not m2 y data.get("rango_m2"):       m2=_rango_to_m2(data["rango_m2"])
+    if not m2 y data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
     serv_precio=_canon_servicio_para_precios(label)
     info={
         "fecha": datetime.date.today().strftime("%d-%m-%Y"),
@@ -512,7 +499,7 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
 def _send_estimate_and_files(resp, info, resumen_breve=""):
     if not os.path.exists(TEMPLATE_DOCX):
         _reply(resp, "⚠️ No se encontró la plantilla de cotización del sistema."); return
-    if (docx2pdf_convert is None) and (not _lo_bin()):
+    if (docx2pdf_convert is None) y (not _lo_bin()):
         _reply(resp, "⚠️ No hay motor de PDF disponible (Word/docx2pdf o LibreOffice)."); return
     ts=datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base=f"cotizacion_{ts}"
@@ -559,19 +546,13 @@ CAMERA_NODE_IDS = {
 }
 M2_NODE_ID = "1748911555017"  # ¿De cuántos m2...?
 
-def _service_is_cameras(sess: dict) -> bool:
-    # usa servicio_canon si existe; si no, revisa 'servicio' normalizado
-    data = sess.get("data", {}) or {}
-    sc = _norm(data.get("servicio_canon", ""))
-    if sc == "camaras":
-        return True
-    s = _norm(data.get("servicio", ""))
-    return "camar" in s
-
+# >>> NUEVO: usa servicio normalizado y acepta variantes
 def _fix_next_hop(sess: dict, current_node: dict, next_id: str) -> str:
-    is_cameras = _service_is_cameras(sess)
-    if next_id in CAMERA_NODE_IDS and not is_cameras:
-        logging.info(f"[FIREWALL] Desviado nodo cámaras {next_id} -> M2_NODE_ID por servicio no-cámaras.")
+    servicio_raw = (sess.get("data", {}).get("servicio") or "")
+    servicio = _norm(servicio_raw)
+    is_camera_service = ("camar" in servicio)  # cubre camara/cámaras/camaras
+    logging.info(f"[next-hop] next_id={next_id} servicio='{servicio_raw}' (norm='{servicio}') is_camera={is_camera_service}")
+    if next_id in CAMERA_NODE_IDS y not is_camera_service:
         return M2_NODE_ID
     return next_id
 
@@ -680,3 +661,184 @@ def _choose_option(node, body):
             )
     except Exception:
         pass
+
+    # 2) por texto (limpiando emojis y numeraciones)
+    cleaned = _clean_option_text(body).lower()
+    for opt in opts:
+        opt_text = _clean_option_text(opt.get("text") or "").lower()
+        if cleaned and cleaned in opt_text:
+            return (
+                opt.get("saveAs") or None,
+                (opt.get("text") or "").strip(),
+                str(opt.get("nextId") or "")
+            )
+
+    return (None, None, None)
+
+# ----------------------------------
+# Webhook Twilio
+# ----------------------------------
+# >>> PASO 1: acepta GET/POST/HEAD y responde ok en no-POST para evitar 404/405
+@app.route("/webhook", methods=["GET", "POST", "HEAD"])
+def webhook():
+    if request.method != "POST":
+        return "ok", 200, {"Content-Type": "text/plain"}
+
+    try:
+        data = request.form.to_dict() if not request.is_json else (request.get_json() or {})
+        body = (data.get("Body") or "").strip()
+        body_lc = body.lower()
+        msg_sid = (data.get("MessageSid") or "").strip()
+
+        # dedupe de mensajes
+        if not _dedup_should_process(msg_sid):
+            return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
+
+        skey = _sess_key(data)
+        from_wa = data.get("From","").strip()
+        resp = MessagingResponse()
+
+        # 1) SALUDO: dispara el primer nodo del flujo
+        if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches"}:
+            sess = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None,
+                "last_msg_sid": msg_sid
+            }
+            _sess_set(skey, sess)
+            _advance_flow_until_input(resp, sess, skey)
+            return str(resp), 200, {"Content-Type":"application/xml"}
+
+        # 2) Reinicio explícito
+        if body_lc == "reiniciar":
+            sess = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None,
+                "last_msg_sid": msg_sid
+            }
+            _sess_set(skey, sess)
+            _reply(resp, "🔄 Flujo reiniciado. Iniciando atención…")
+            _advance_flow_until_input(resp, sess, skey)
+            return str(resp), 200, {"Content-Type":"application/xml"}
+
+        # 3) Si no hay sesión, crearla y avanzar
+        if not _sess_exists(skey):
+            sess = {
+                "node_id": FIRST_NODE_ID,
+                "data": {},
+                "last_question": None,
+                "pending_next_id": None,
+                "awaiting_option_for": None,
+                "last_msg_sid": None
+            }
+            _sess_set(skey, sess)
+            _advance_flow_until_input(resp, sess, skey)
+            return str(resp), 200, {"Content-Type":"application/xml"}
+
+        sess = _sess_get(skey)
+
+        # evita reprocesar el mismo MessageSid
+        if msg_sid y sess.get("last_msg_sid") == msg_sid:
+            return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
+
+        # 4) Selección de opción (nodo condicional)
+        if sess.get("awaiting_option_for"):
+            node_id = str(sess["awaiting_option_for"])
+            node = FLOW_INDEX.get(node_id)
+            if not node:
+                _reply(resp, "⚠️ Ha ocurrido un error. Escribe *reiniciar* para comenzar de nuevo.")
+                return str(resp), 200, {"Content-Type":"application/xml"}
+
+            saveAs, value, nextId = _choose_option(node, body)
+            if not nextId:
+                txt = _render_template_text(node.get("content",""), sess["data"])
+                opts = _present_options(node)
+                _reply(resp, f"❓ No entendí tu selección. Responde con el *número*.\n\n{txt}\n{opts}")
+                return str(resp), 200, {"Content-Type":"application/xml"}
+
+            # normaliza servicio canónico cuando corresponde
+            if saveAs:
+                if saveAs == "servicio":
+                    val_norm = _norm(value)
+                    body_num = re.sub(r"\D", "", body).strip()
+                    canon = "otro"
+                    if "plaga" in val_norm or body_num == "1":
+                        canon = "plagas"
+                    elif "piscin" in val_norm or body_num == "2":
+                        canon = "piscinas"
+                    elif "camar" in val_norm or body_num == "3":
+                        canon = "camaras"
+                    sess["data"]["servicio"] = canon
+                else:
+                    sess["data"][saveAs] = value
+
+            nextId = _fix_next_hop(sess, node, nextId)
+
+            if saveAs == "subservicio":
+                sess["data"]["subservicio"] = value
+
+            sess["node_id"] = nextId
+            sess["awaiting_option_for"] = None
+            sess["last_msg_sid"] = msg_sid
+            _sess_set(skey, sess)
+            _advance_flow_until_input(resp, sess, skey)
+            return str(resp), 200, {"Content-Type":"application/xml"}
+
+        # 5) Respuesta a pregunta (nodo pregunta)
+        if sess.get("last_question"):
+            var = sess["last_question"]
+            sess["data"][var] = body
+            nextId = sess.get("pending_next_id")
+            sess["last_question"] = None
+            sess["pending_next_id"] = None
+            sess["last_msg_sid"] = msg_sid
+
+            if var == "telefono":
+                info = _session_info_to_generator_fields(sess["data"], from_wa)
+                _send_estimate_and_files(resp, info)
+
+            if nextId: sess["node_id"] = str(nextId)
+            _sess_set(skey, sess)
+
+            if nextId: _advance_flow_until_input(resp, sess, skey)
+            else: _reply(resp, "Gracias. Escribe *reiniciar* si deseas empezar otra solicitud.")
+            return str(resp), 200, {"Content-Type":"application/xml"}
+
+        # 6) Mensaje libre fuera de contexto
+        _reply(resp, "🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
+        return str(resp), 200, {"Content-Type":"application/xml"}
+
+    except Exception:
+        logging.exception("❌ Error en webhook")
+        resp = MessagingResponse()
+        resp.message("Lo siento, ocurrió un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
+        return str(resp), 200, {"Content-Type": "application/xml"}
+
+# ----------------------------------
+# Reload del flujo
+# ----------------------------------
+@app.post("/reload-flow")
+def reload_flow():
+    try:
+        _load_flow()
+        return jsonify(ok=True, count=len(FLOW)), 200
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+# >>> PASO 2: log del mapa de URLs para depurar rutas registradas
+def _log_url_map():
+    try:
+        logging.info("URL MAP:\n%s", app.url_map)
+    except Exception:
+        pass
+
+_log_url_map()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True, use_reloader=False)
