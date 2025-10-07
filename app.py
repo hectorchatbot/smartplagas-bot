@@ -144,7 +144,7 @@ PRECIOS = {
 }
 
 # ----------------------------------
-# PISCINAS: tramos por m³ y tarifas (40% utilidad)
+# PISCINAS: tramos por m³ y tarifas (30% utilidad)
 # ----------------------------------
 TRAMOS_M3 = [
     (0, 25), (26, 50), (51, 100), (101, 999999)
