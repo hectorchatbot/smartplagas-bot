@@ -453,7 +453,7 @@ def _rango_to_m2(r:str)->float:
     if "menos" in s or "<" in s:
         return 80.0
     # FIX: "y" -> "and"
-    if ("100" in s) and ("200" in s):
+    if any(code in s for code in ("100", "200")):
         return 150.0
     if "mas" in s or ">" in s or "200" in s:
         return 220.0
