@@ -452,8 +452,8 @@ def _rango_to_m2(r:str)->float:
     s = _strip_accents_and_symbols(r)
     if "menos" in s or "<" in s:
         return 80.0
-    # FIX: "y" -> "and"
-    if any(code in s for code in ("100", "200")):
+    # FIX: "and" -> "and"
+    if "100" in s and "200" in s:
         return 150.0
     if "mas" in s or ">" in s or "200" in s:
         return 220.0
@@ -477,8 +477,8 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
             m2=float(str(data["m2"]).replace(",", "."))
         except Exception:
             m2=0.0
-    if not m2 y data.get("rango_m2"):       m2=_rango_to_m2(data["rango_m2"])
-    if not m2 y data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
+    if not m2 and data.get("rango_m2"):     m2 = _rango_to_m2(data["rango_m2"])
+    if not m2 and data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
     serv_precio=_canon_servicio_para_precios(label)
     info={
         "fecha": datetime.date.today().strftime("%d-%m-%Y"),
@@ -500,7 +500,7 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
 def _send_estimate_and_files(resp, info, resumen_breve=""):
     if not os.path.exists(TEMPLATE_DOCX):
         _reply(resp, "⚠️ No se encontró la plantilla de cotización del sistema."); return
-    if (docx2pdf_convert is None) y (not _lo_bin()):
+    if (docx2pdf_convert is None) and (not _lo_bin()):
         _reply(resp, "⚠️ No hay motor de PDF disponible (Word/docx2pdf o LibreOffice)."); return
     ts=datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base=f"cotizacion_{ts}"
@@ -553,7 +553,7 @@ def _fix_next_hop(sess: dict, current_node: dict, next_id: str) -> str:
     servicio = _norm(servicio_raw)
     is_camera_service = ("camar" in servicio)  # cubre camara/cámaras/camaras
     logging.info(f"[next-hop] next_id={next_id} servicio='{servicio_raw}' (norm='{servicio}') is_camera={is_camera_service}")
-    if next_id in CAMERA_NODE_IDS y not is_camera_service:
+    if next_id in CAMERA_NODE_IDS and not is_camera_service:
         return M2_NODE_ID
     return next_id
 
@@ -745,7 +745,7 @@ def webhook():
         sess = _sess_get(skey)
 
         # evita reprocesar el mismo MessageSid
-        if msg_sid y sess.get("last_msg_sid") == msg_sid:
+        if msg_sid and sess.get("last_msg_sid") == msg_sid:
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
         # 4) Selección de opción (nodo condicional)
