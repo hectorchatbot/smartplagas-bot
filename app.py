@@ -501,7 +501,7 @@ def handle_generate():
         if SEND_DOC:
             send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
-    if SEND_COPY_TO_ADMIN AND ADMIN_WA:
+    if SEND_COPY_TO_ADMIN and ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
