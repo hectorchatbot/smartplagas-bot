@@ -311,6 +311,16 @@ def _calc_m3_from_data(data: dict) -> float:
             if v > 0:
                 return round(v, 1)
 
+def _dominio_servicio(label: str) -> str:
+    s = _norm(label)
+    if "piscin" in s:
+        return "piscinas"
+    if any(k in s for k in ("plaga", "desratiz", "desinsect", "sanitiz")):
+        return "plagas"
+    if "camar" in s:
+        return "camaras"
+    return "otro"
+
     # 2) desde tamaño LxA
     area_m2 = 0.0
     tp = (data.get("tamano_piscina") or "").lower()
@@ -701,13 +711,42 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
     detalle_m2 = f"\n📐 Superficie: {info.get('m2')} m²" if info.get("m2") else ""
 
     msg=(f"📄 He preparado tu estimado.\n"
-         f"*Servicio:* {info['servicio_label']}{detalle_p}{detalle_m3}{detalle_m2}\n"
-         f"💵 *Estimado:* {total_txt} CLP\n"
-         f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
-         f"📎 *PDF:* {pdf_url}\n"
-         f"📄 *DOCX:* {docx_url}\n\n"
-         f"¿Te agendo una visita esta semana? Responde *SI* o *NO*.")
-    _reply(resp, msg)
+    # ---- líneas informativas según tipo de servicio ----
+    dominio = _dominio_servicio(info.get("servicio_label",""))
+    medidas_txt = ""
+    # Intento de volumen si es piscina: volumen ≈ superficie (m2) × profundidad media
+    vol_txt = ""
+    try:
+        prof = None
+        # si guardas profundidad en el flujo:
+        if "profundidad" in info and str(info["profundidad"]).strip():
+            prof = float(str(info["profundidad"]).replace(",", "."))
+        if dominio == "piscinas":
+            if prof is not None and float(info.get("m2", 0)) > 0:
+                vol_calc = round(float(info["m2"]) * prof, 1)
+                vol_txt = f"💧 *Volumen estimado:* {vol_calc} m³\n"
+            medidas_txt = f"{vol_txt}🧱 *Superficie:* {info.get('m2', 0)} m²\n"
+        elif dominio == "plagas":
+            # Para plagas SOLO superficie tratada (sin volumen)
+            medidas_txt = f"🏠 *Superficie tratada:* {info.get('m2', 0)} m²\n"
+        else:
+            medidas_txt = ""
+    except Exception:
+        medidas_txt = ""
+
+    detalle_p = f"\n🧮 Tamaño piscina: {info['tamano_piscina']}" if info.get("tamano_piscina") else ""
+
+    msg = (
+        "📄 He preparado tu estimado.\n"
+        f"*Servicio:* {info['servicio_label']}{detalle_p}\n"
+        f"{medidas_txt}"
+        f"💵 *Estimado:* {total_txt} CLP\n"
+        f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
+        f"📎 *PDF:* {pdf_url}\n"
+        f"📄 *DOCX:* {docx_url}\n\n"
+        "¿Te agendo una visita esta semana? Responde *SI* o *NO*."
+    )
+
 
     # Cliente: PDF adjunto (y opcionalmente DOCX como link)
     if SEND_PDF and info.get("to_whatsapp"):
@@ -718,11 +757,22 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
     # Admin: resumen + PDF + enlace al DOCX
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         resumen_admin=(
-            f"👤 Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
-            f"🧰 Servicio: {info['servicio_label']} | m2: {info.get('m2',0)} | m3: {info.get('m3',0)}\n"
-            f"📍 Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
-            f"💵 Total (estimado): {total_txt}"
-        )
+    dominio = _dominio_servicio(info.get("servicio_label",""))
+    medida_admin = ""
+    if dominio == "piscinas":
+        medida_admin = f" | m²: {info.get('m2',0)}"
+    elif dominio == "plagas":
+        medida_admin = f" | m² tratados: {info.get('m2',0)}"
+    else:
+        medida_admin = ""
+
+    resumen_admin = (
+        f"👤 Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
+        f"🧰 Servicio: {info['servicio_label']}{medida_admin}\n"
+        f"📍 Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
+        f"💵 Total (estimado): {total_txt}"
+    )
+
         send_admin_copy(resumen_admin, pdf_url, docx_url)
 
 # ---- Cortafuegos de saltos imposibles (hotfix) ---------------------
