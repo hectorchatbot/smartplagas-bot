@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- 
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -131,7 +131,7 @@ SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
 # ----------------------------------
-# Precios (plagas por m²)
+# Precios PLAGAS por m² (como antes)
 # ----------------------------------
 TRAMOS = [
     (0, 50), (51, 100), (101, 200), (201, 300),
@@ -144,7 +144,7 @@ PRECIOS = {
 }
 
 # ----------------------------------
-# PISCINAS: tramos por m³ y tarifas (30% utilidad)
+# PISCINAS por m³ (30% utilidad ya incluida)
 # ----------------------------------
 TRAMOS_M3 = [
     (0, 25), (26, 50), (51, 100), (101, 999999)
@@ -153,12 +153,12 @@ TRAMOS_M3 = [
 PRECIOS_PISCINA = {
     "piscina_plan_intermedio_m3":  [3900, 3400, 3100, 0],       # Tratamiento + Limpieza (Plan Intermedio)
     "piscina_mantencion_bomba_m3": [3200, 3000, 2800, 0],       # Revisión/Limpieza bomba y filtro
-    "piscina_shock_m3":            [1500, 1300, 1100, 0],       # Shock cloración
+    "piscina_shock_m3":            [1500, 1300, 1100, 0],       # Shock/cloración intensa
     "piscina_diagnostico_total":   [30000, 35000, 40000, 45000],
     "piscina_cambio_arena_total":  [90000, 140000, 200000, 300000],
 }
 
-def _fmt_money_clp(v:int)->str:
+def _fmt_money_clp(v:int)->str: 
     return f"${v:,}".replace(",", ".")
 
 # ----------------------------------
@@ -174,32 +174,44 @@ def _norm(s: str) -> str:
     if not s:
         return ""
     s = s.strip().lower()
-    s = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", s)  # emojis/dingbats
+    s = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", s)
     s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", s).strip()
 
+# Dominio (piscinas/plagas/cámaras)
+def _dominio_servicio(label: str) -> str:
+    s = _norm(label)
+    if "piscin" in s:
+        return "piscinas"
+    if any(k in s for k in ("plaga", "desratiz", "desinsect", "sanitiz")):
+        return "plagas"
+    if "camar" in s:
+        return "camaras"
+    return "otro"
+
 def _canon_servicio_para_precios(servicio_humano: str) -> str:
     s = _strip_accents_and_symbols(servicio_humano)
-    # EXISTENTES
     if "desratiz" in s:   return "desratizacion"
     if "desinfecc" in s:  return "desinfeccion"
     if "desinsect" in s:  return "desinsectacion"
-    # PISCINAS
-    if "piscin" in s:
-        if "intermedio" in s or "integral" in s or "plan" in s:
-            return "piscina_plan_intermedio_m3"
-        if ("mantencion" in s or "mantenimiento" in s) and ("bomba" in s or "filtro" in s):
-            return "piscina_mantencion_bomba_m3"
-        if "shock" in s or "cloracion" in s or "cloración" in servicio_humano.lower():
-            return "piscina_shock_m3"
-        if "diagnost" in s:
-            return "piscina_diagnostico_total"
-        if "arena" in s or "carga" in s or "filtro" in s:
-            return "piscina_cambio_arena_total"
-        return "piscina_plan_intermedio_m3"
-    # fallback
     return "desinsectacion"
 
+# Mapear subservicio piscina a clave de tarifa
+def _canon_piscina_key(label: str) -> str:
+    s = _norm(label)
+    if "plan intermedio" in s or ("tratamient" in s and "limpiez" in s):
+        return "piscina_plan_intermedio_m3"
+    if ("bomba" in s) or ("filtro" in s) or ("mantencion" in s):
+        return "piscina_mantencion_bomba_m3"
+    if ("shock" in s) or ("clor" in s):
+        return "piscina_shock_m3"
+    if ("diagn" in s):
+        return "piscina_diagnostico_total"
+    if ("arena" in s) or ("carga" in s):
+        return "piscina_cambio_arena_total"
+    return ""
+
+# Precio PLAGAS por m²
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
     if not tabla: return 0
@@ -208,6 +220,59 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
         if lo <= m2n <= hi:
             return int(tabla[idx])
     return int(tabla[-1])
+
+# Volumen piscina (si hay m3 explícito lo usa; si no, m2*profundidad)
+def _volumen_estimado_m3(info: dict) -> float:
+    for k in ("m3", "volumen", "volumen_m3"):
+        v = str(info.get(k, "") or "").strip()
+        if v:
+            try:
+                return float(v.replace(",", "."))
+            except Exception:
+                pass
+    try:
+        m2 = float(info.get("m2") or 0)
+    except Exception:
+        m2 = 0.0
+    try:
+        prof = float(str(info.get("profundidad") or "").replace(",", ".")) if info.get("profundidad") else None
+    except Exception:
+        prof = None
+    if m2 > 0 and prof is not None and prof > 0:
+        return round(m2 * prof, 1)
+    return 0.0
+
+# Precio PISCINAS por m³ o total por tramo
+def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
+    if m3 <= 0 and serv_key.endswith("_m3"):
+        return 0
+    tabla = PRECIOS_PISCINA.get(serv_key)
+    if not tabla:
+        return 0
+    idx = len(TRAMOS_M3) - 1
+    for i, (lo, hi) in enumerate(TRAMOS_M3):
+        if lo <= m3 <= hi:
+            idx = i; break
+    if serv_key.endswith("_m3"):
+        unit = tabla[idx]
+        if unit <= 0:
+            return 0
+        return int(round(unit * m3))
+    else:
+        total = tabla[idx]
+        return int(total or 0)
+
+# Punto único de verdad del precio
+def precio_total(info: dict) -> int:
+    dominio = _dominio_servicio(info.get("servicio_label",""))
+    if dominio == "piscinas":
+        key = _canon_piscina_key(info.get("servicio_label",""))
+        m3 = _volumen_estimado_m3(info)
+        return _precio_piscina_por_tramo(key, m3)
+    elif dominio == "plagas":
+        return precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
+    else:
+        return 0
 
 def _safe(x):
     if x is None: return ""
@@ -280,127 +345,16 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str)->None:
         return
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
-# ----------------------------------
-# Helpers de piscina (m³)
-# ----------------------------------
-def _parse_number(s: str) -> float:
-    try:
-        return float((s or "").replace(",", "."))
-    except Exception:
-        return 0.0
-
-def _extract_first_number(text: str) -> float:
-    if not text:
-        return 0.0
-    m = re.search(r"(\d+(?:[.,]\d+)?)", str(text))
-    return _parse_number(m.group(1)) if m else 0.0
-
-def _parse_depth_from_data(data: dict) -> float:
-    for k in ("profundidad", "prof_media", "prof", "h", "altura"):
-        if k in data and str(data[k]).strip():
-            v = _extract_first_number(str(data[k]))
-            if v > 0:
-                return v
-    return 1.4  # profundidad media por defecto
-
-def _calc_m3_from_data(data: dict) -> float:
-    # 1) m3 explícito
-    for k in ("m3", "volumen", "volumen_m3"):
-        if k in data and str(data[k]).strip():
-            v = _extract_first_number(str(data[k]))
-            if v > 0:
-                return round(v, 1)
-
-def _dominio_servicio(label: str) -> str:
-    s = _norm(label)
-    if "piscin" in s:
-        return "piscinas"
-    if any(k in s for k in ("plaga", "desratiz", "desinsect", "sanitiz")):
-        return "plagas"
-    if "camar" in s:
-        return "camaras"
-    return "otro"
-
-    # 2) desde tamaño LxA
-    area_m2 = 0.0
-    tp = (data.get("tamano_piscina") or "").lower()
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)", tp)
-    if m:
-        l = _parse_number(m.group(1))
-        a = _parse_number(m.group(2))
-        area_m2 = l * a
-
-    # 3) desde m2 sueltos
-    if not area_m2:
-        if "m2" in data and str(data["m2"]).strip():
-            area_m2 = _parse_number(str(data["m2"]))
-        elif "metros2" in data and str(data["metros2"]).strip():
-            area_m2 = _parse_number(str(data["metros2"]))
-
-    depth = _parse_depth_from_data(data)
-    if area_m2 > 0 and depth > 0:
-        return round(area_m2 * depth, 1)
-
-    return 0.0
-
-# ----------------------------------
-# Precios piscina (por m³ o total) + unificación
-# ----------------------------------
-def precio_piscina_por_tramo(servicio_precio: str, m3: float) -> int:
-    if m3 <= 0:
-        return 0
-    # índice de tramo por m³
-    idx = 0
-    m3i = int(round(m3))
-    for i, (lo, hi) in enumerate(TRAMOS_M3):
-        if lo <= m3i <= hi:
-            idx = i
-            break
-
-    tabla = PRECIOS_PISCINA.get(servicio_precio)
-    if not tabla:
-        return 0
-
-    if servicio_precio.endswith("_m3"):
-        rate = float(tabla[idx])
-        if rate <= 0:
-            return 0
-        return int(round(rate * m3))
-
-    if servicio_precio.endswith("_total"):
-        val = int(tabla[idx])
-        return val if val > 0 else 0
-
-    return 0
-
-def precio_unificado(servicio_precio: str, m2: float, m3: float) -> int:
-    if servicio_precio.startswith("piscina_"):
-        return precio_piscina_por_tramo(servicio_precio, m3)
-    return precio_por_tramo(servicio_precio, m2)
-
-# ----------------------------------
-# Generación DOCX desde plantilla
-# ----------------------------------
 def generar_docx_desde_plantilla(path: str, info: dict)->None:
     if not os.path.exists(TEMPLATE_DOCX): raise FileNotFoundError(f"Plantilla no encontrada: {TEMPLATE_DOCX}")
     tpl = DocxTemplate(TEMPLATE_DOCX)
-    # formateo m2
-    try: m2_txt = str(int(info.get("m2", 0))) if float(info.get("m2", 0)).is_integer() else str(info.get("m2", 0))
-    except Exception: m2_txt = str(info.get("m2", 0))
-
-    total = precio_unificado(info["servicio_precio"], info.get("m2", 0), info.get("m3", 0))
+    try: m2_txt = str(int(info["m2"])) if float(info["m2"]).is_integer() else str(info["m2"])
+    except Exception: m2_txt = str(info["m2"])
+    total = precio_total(info)
     tpl.render({
-        "fecha": info["fecha"],
-        "cliente": info["cliente"],
-        "direccion": info["direccion"],
-        "comuna": info.get("comuna",""),
-        "contacto": info["contacto"],
-        "email": info["email"],
-        "servicio": info["servicio_label"],
-        "m2": m2_txt,
-        "m3": str(info.get("m3", "")),            # opcional en plantilla
-        "profundidad": info.get("profundidad",""),# opcional en plantilla
-        "precio": _fmt_money_clp(total),
+        "fecha": info["fecha"], "cliente": info["cliente"], "direccion": info["direccion"],
+        "comuna": info.get("comuna",""), "contacto": info["contacto"], "email": info["email"],
+        "servicio": info["servicio_label"], "m2": m2_txt, "precio": _fmt_money_clp(total),
     })
     tpl.save(path)
 
@@ -461,40 +415,18 @@ def normalize_payload(data: dict) -> dict:
         m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
-
-    # NUEVO: volumen m³ y profundidad media (opcionales)
-    m3_raw   = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
-    prof_raw = _safe(data.get("profundidad") or data.get("prof_media") or data.get("prof"))
-
-    try:
-        m3_num_explicit = float((m3_raw or "0").replace(",", "."))
-    except Exception:
-        m3_num_explicit = 0.0
-
-    if m3_num_explicit > 0:
-        m3_calc = m3_num_explicit
-    else:
-        _ctx = {
-            "tamano_piscina": _safe(data.get("tamano_piscina")),
-            "m2": m2_num,
-            "profundidad": prof_raw
-        }
-        m3_calc = _calc_m3_from_data(_ctx)
-
     to_wa = ""
     if fono:
         digits = "".join(ch for ch in fono if ch.isdigit())
         if   digits.startswith("56"): to_wa = f"whatsapp:+{digits}"
         elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
         elif digits:                  to_wa = f"whatsapp:+{digits}"
-
     servicio_label  = servicio or "Desinsectación"
     servicio_precio = _canon_servicio_para_precios(servicio_label)
     return {
         "fecha": datetime.date.today().strftime("%d-%m-%Y"),
         "servicio_label": servicio_label, "servicio_precio": servicio_precio,
-        "cliente": cliente, "m2": m2_num, "m3": m3_calc, "profundidad": prof_raw,
-        "direccion": direccion, "comuna": comuna,
+        "cliente": cliente, "m2": m2_num, "direccion": direccion, "comuna": comuna,
         "detalles": detalles, "contacto": contacto, "email": email, "to_whatsapp": to_wa
     }
 
@@ -518,15 +450,7 @@ def _read_payload_any():
 def handle_generate():
     payload = _read_payload_any()
     info = normalize_payload(payload)
-    faltantes = [k for k in ("servicio_label","cliente","direccion","contacto") if not info.get(k)]
-    # Para piscinas por m³ aceptamos m3>0; para plagas exigimos m2>0
-    if info["servicio_precio"].startswith("piscina_"):
-        if info.get("m3", 0) <= 0 and info.get("m2", 0) <= 0:
-            faltantes.append("m3/m2")
-    else:
-        if info.get("m2", 0) <= 0:
-            faltantes.append("m2")
-
+    faltantes = [k for k in ("servicio_label","cliente","m2","direccion","contacto") if not info.get(k)]
     if faltantes:
         return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
@@ -550,40 +474,34 @@ def handle_generate():
         return jsonify(ok=False, error="doc_generate_failed", detail=str(e)), 500
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
-    total_val = precio_unificado(info["servicio_precio"], info.get("m2",0), info.get("m3",0))
-    total = _fmt_money_clp(total_val)
+    total = _fmt_money_clp(precio_total(info))
+
+    dominio = _dominio_servicio(info.get("servicio_label",""))
+    medidas_line = ""
+    if dominio == "piscinas":
+        medidas_line = f"*Superficie:* {info['m2']} m²\n"
+    elif dominio == "plagas":
+        medidas_line = f"*Superficie tratada:* {info['m2']} m²\n"
 
     partes = [
         "✅ *Nueva solicitud recibida*\n",
         f"*Servicio:* {info['servicio_label']}\n",
         f"*Cliente:* {info['cliente']}\n",
+        medidas_line,
+        f"*Ubicación:* {info['direccion']}\n",
     ]
-    if info["servicio_precio"].startswith("piscina_"):
-        if info.get("m3"):
-            partes.append(f"*Volumen:* {info['m3']} m³\n")
-        if info.get("m2"):
-            partes.append(f"*Superficie:* {info['m2']} m²\n")
-    else:
-        partes.append(f"*Metros²:* {info['m2']}\n")
-
-    partes.append(f"*Ubicación:* {info['direccion']}\n")
     if info.get("comuna"): partes.append(f"*Comuna:* {info['comuna']}\n")
-    partes.extend([
-        f"*Detalles:* {info.get('detalles','')}\n",
-        f"*Contacto:* {info['contacto']} | {info['email']}\n",
-        f"*Total:* {total}"
-    ])
+    partes.extend([f"*Detalles:* {info.get('detalles','')}\n",
+                   f"*Contacto:* {info['contacto']} | {info['email']}\n", f"*Total:* {total}"])
     resumen = "".join(partes)
 
     sids = {}
-    # Enviar al cliente (si hay número)
     if info["to_whatsapp"] and SEND_PDF:
         sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
             send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
-    # Copia al admin (resumen + pdf + enlace docx)
-    if SEND_COPY_TO_ADMIN and ADMIN_WA:
+    if SEND_COPY_TO_ADMIN AND ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
@@ -656,8 +574,7 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
         except Exception:
             m2=0.0
     if not m2 and data.get("rango_m2"):       m2 = _rango_to_m2(data["rango_m2"])
-    if not m2 and data.get("tamano_piscina"): m2=_parse_piscina_to_m2(data["tamano_piscina"])
-
+    if not m2 and data.get("tamano_piscina"): m2 = _parse_piscina_to_m2(data["tamano_piscina"])
     serv_precio=_canon_servicio_para_precios(label)
     info={
         "fecha": datetime.date.today().strftime("%d-%m-%Y"),
@@ -673,19 +590,8 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
         "to_whatsapp": from_wa if from_wa.startswith("whatsapp:") else ""
     }
     info["tamano_piscina"]=data.get("tamano_piscina","")
+    info["profundidad"]=data.get("profundidad","")  # para volumen m3 si viene
     info["telefono"]=data.get("telefono","")
-
-    # NUEVO: volumen m³ estimado desde sesión (LxA y/o m2 + profundidad)
-    ctx_for_m3 = {
-        "tamano_piscina": data.get("tamano_piscina", ""),
-        "m2": m2,
-        "profundidad": data.get("profundidad", "") or data.get("prof_media", "") or data.get("prof", "")
-    }
-    info["m3"] = _calc_m3_from_data(ctx_for_m3)
-    if info["m3"] <= 0 and m2 > 0:
-        info["m3"] = round(m2 * 1.4, 1)  # fallback con prof. media
-    info["profundidad"] = ctx_for_m3.get("profundidad","")
-
     return info
 
 def _send_estimate_and_files(resp, info, resumen_breve=""):
@@ -703,22 +609,14 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
     except Exception as e:
         _reply(resp, "⚠️ No pude generar tu documento: "+str(e)); return
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
-
-    total_int = precio_unificado(info["servicio_precio"], info.get("m2",0), info.get("m3",0))
+    total_int = precio_total(info)
     total_txt = _fmt_money_clp(total_int)
-    detalle_p = f"\n🧮 Tamaño piscina: {info['tamano_piscina']}" if info.get("tamano_piscina") else ""
-    detalle_m3 = f"\n💧 Volumen estimado: {info['m3']} m³" if info.get("m3") else ""
-    detalle_m2 = f"\n📐 Superficie: {info.get('m2')} m²" if info.get("m2") else ""
 
-    msg=(f"📄 He preparado tu estimado.\n"
-    # ---- líneas informativas según tipo de servicio ----
     dominio = _dominio_servicio(info.get("servicio_label",""))
     medidas_txt = ""
-    # Intento de volumen si es piscina: volumen ≈ superficie (m2) × profundidad media
     vol_txt = ""
     try:
         prof = None
-        # si guardas profundidad en el flujo:
         if "profundidad" in info and str(info["profundidad"]).strip():
             prof = float(str(info["profundidad"]).replace(",", "."))
         if dominio == "piscinas":
@@ -727,60 +625,50 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
                 vol_txt = f"💧 *Volumen estimado:* {vol_calc} m³\n"
             medidas_txt = f"{vol_txt}🧱 *Superficie:* {info.get('m2', 0)} m²\n"
         elif dominio == "plagas":
-            # Para plagas SOLO superficie tratada (sin volumen)
             medidas_txt = f"🏠 *Superficie tratada:* {info.get('m2', 0)} m²\n"
         else:
             medidas_txt = ""
     except Exception:
         medidas_txt = ""
 
-    detalle_p = f"\n🧮 Tamaño piscina: {info['tamano_piscina']}" if info.get("tamano_piscina") else ""
+    detalle_p=f"\n🧮 Tamaño piscina: {info['tamano_piscina']}" if info.get("tamano_piscina") else ""
+    msg=(f"📄 He preparado tu estimado.\n"
+         f"*Servicio:* {info['servicio_label']}{detalle_p}\n"
+         f"{medidas_txt}"
+         f"💵 *Estimado:* {total_txt} CLP\n"
+         f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
+         f"📎 *PDF:* {pdf_url}\n"
+         f"📄 *DOCX:* {docx_url}\n\n"
+         f"¿Te agendo una visita esta semana? Responde *SI* o *NO*.")
+    _reply(resp, msg)
 
-    msg = (
-        "📄 He preparado tu estimado.\n"
-        f"*Servicio:* {info['servicio_label']}{detalle_p}\n"
-        f"{medidas_txt}"
-        f"💵 *Estimado:* {total_txt} CLP\n"
-        f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
-        f"📎 *PDF:* {pdf_url}\n"
-        f"📄 *DOCX:* {docx_url}\n\n"
-        "¿Te agendo una visita esta semana? Responde *SI* o *NO*."
-    )
-
-
-    # Cliente: PDF adjunto (y opcionalmente DOCX como link)
     if SEND_PDF and info.get("to_whatsapp"):
         send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
             send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
-    # Admin: resumen + PDF + enlace al DOCX
-    if SEND_COPY_TO_ADMIN and ADMIN_WA:
-        resumen_admin=(
     dominio = _dominio_servicio(info.get("servicio_label",""))
-    medida_admin = ""
     if dominio == "piscinas":
         medida_admin = f" | m²: {info.get('m2',0)}"
     elif dominio == "plagas":
         medida_admin = f" | m² tratados: {info.get('m2',0)}"
     else:
         medida_admin = ""
-
-    resumen_admin = (
+    resumen_admin=(
         f"👤 Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
         f"🧰 Servicio: {info['servicio_label']}{medida_admin}\n"
         f"📍 Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
         f"💵 Total (estimado): {total_txt}"
     )
-
+    if SEND_COPY_TO_ADMIN and ADMIN_WA:
         send_admin_copy(resumen_admin, pdf_url, docx_url)
 
-# ---- Cortafuegos de saltos imposibles (hotfix) ---------------------
+# ---- Cortafuegos de saltos imposibles (hotfix)
 CAMERA_NODE_IDS = {
     "1748913058876", "1748913223390", "1748913354726",
     "1748913446918", "1748913856796"
 }
-M2_NODE_ID = "1748911555017"  # ¿De cuántos m2...?
+M2_NODE_ID = "1748911555017"
 
 def _fix_next_hop(sess: dict, current_node: dict, next_id: str) -> str:
     servicio_raw = (sess.get("data", {}).get("servicio") or "")
@@ -803,7 +691,6 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
         varname = (node.get("variableName") or "").strip()
         nextId  = str(node.get("nextId") or "")
 
-        # ----- MENSAJE -----
         if ntype == "mensaje":
             _reply(resp, _render_template_text(content, sess["data"]))
             if not nextId:
@@ -815,7 +702,6 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
                 _sess_set(skey, sess)
             continue
 
-        # ----- PREGUNTA -----
         elif ntype == "pregunta":
             _reply(resp, _render_template_text(content, sess["data"]))
             sess["last_question"]   = varname if varname else None
@@ -825,7 +711,6 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
                 _sess_set(skey, sess)
             return "wait_input"
 
-        # ----- CONDICIONAL -----
         elif ntype == "condicional":
             txt = _render_template_text(content, sess["data"])
             opts = _present_options(node)
@@ -837,7 +722,6 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
                 _sess_set(skey, sess)
             return "wait_option"
 
-        # ----- DESCONOCIDO -----
         else:
             _reply(resp, "⚠️ Tipo de bloque no reconocido.")
             if skey:
@@ -870,13 +754,9 @@ def generate():
     return handle_generate()
 
 # ----------------------------------
-# Selección de opciones (condicional) — versión única
+# Selección de opciones (condicional)
 # ----------------------------------
 def _choose_option(node, body):
-    """
-    Determina qué opción del nodo condicional eligió el usuario.
-    Retorna (saveAs, value, nextId)
-    """
     if not node or node.get("type") != "condicional":
         return (None, None, None)
 
@@ -884,7 +764,6 @@ def _choose_option(node, body):
     if not opts:
         return (None, None, None)
 
-    # 1) por número
     try:
         num = int(re.sub(r"\D", "", body))
         if 1 <= num <= len(opts):
@@ -897,7 +776,6 @@ def _choose_option(node, body):
     except Exception:
         pass
 
-    # 2) por texto
     cleaned = _clean_option_text(body).lower()
     for opt in opts:
         opt_text = _clean_option_text(opt.get("text") or "").lower()
@@ -907,7 +785,6 @@ def _choose_option(node, body):
                 (opt.get("text") or "").strip(),
                 str(opt.get("nextId") or "")
             )
-
     return (None, None, None)
 
 # ----------------------------------
@@ -924,7 +801,6 @@ def webhook():
         body_lc = body.lower()
         msg_sid = (data.get("MessageSid") or "").strip()
 
-        # dedupe
         if not _dedup_should_process(msg_sid):
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
@@ -932,7 +808,6 @@ def webhook():
         from_wa = data.get("From","").strip()
         resp = MessagingResponse()
 
-        # 1) SALUDO: dispara el primer nodo del flujo
         if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches"}:
             sess = {
                 "node_id": FIRST_NODE_ID,
@@ -946,7 +821,6 @@ def webhook():
             _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        # 2) Reinicio explícito
         if body_lc == "reiniciar":
             sess = {
                 "node_id": FIRST_NODE_ID,
@@ -961,7 +835,6 @@ def webhook():
             _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        # 3) Si no hay sesión, crearla y avanzar
         if not _sess_exists(skey):
             sess = {
                 "node_id": FIRST_NODE_ID,
@@ -977,11 +850,9 @@ def webhook():
 
         sess = _sess_get(skey)
 
-        # evita reprocesar el mismo MessageSid
         if msg_sid and sess.get("last_msg_sid") == msg_sid:
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
-        # 4) Selección de opción (nodo condicional)
         if sess.get("awaiting_option_for"):
             node_id = str(sess["awaiting_option_for"])
             node = FLOW_INDEX.get(node_id)
@@ -996,7 +867,6 @@ def webhook():
                 _reply(resp, f"❓ No entendí tu selección. Responde con el *número*.\n\n{txt}\n{opts}")
                 return str(resp), 200, {"Content-Type":"application/xml"}
 
-            # normaliza servicio canónico cuando corresponde
             if saveAs:
                 if saveAs == "servicio":
                     val_norm = _norm(value)
@@ -1024,7 +894,6 @@ def webhook():
             _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        # 5) Respuesta a pregunta (nodo pregunta)
         if sess.get("last_question"):
             var = sess["last_question"]
             sess["data"][var] = body
@@ -1044,7 +913,6 @@ def webhook():
             else: _reply(resp, "Gracias. Escribe *reiniciar* si deseas empezar otra solicitud.")
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        # 6) Mensaje libre fuera de contexto
         _reply(resp, "🤖 No entendí tu mensaje. Escribe *reiniciar* para comenzar nuevamente.")
         return str(resp), 200, {"Content-Type":"application/xml"}
 
@@ -1065,7 +933,6 @@ def reload_flow():
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
-# >>> log del mapa de URLs para depurar rutas registradas
 def _log_url_map():
     try:
         logging.info("URL MAP:\n%s", app.url_map)
