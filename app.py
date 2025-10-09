@@ -321,7 +321,7 @@ def build_urls(filename_docx: str, filename_pdf: str):
     return _bypass(docx_url), _bypass(pdf_url)
 
 # ----------------------------------
-# DOCX -> PDF
+# DOCX -> PDF (con soporte para emojis y texto completo)
 # ----------------------------------
 try:
     from docx2pdf import convert as docx2pdf_convert
@@ -332,38 +332,87 @@ try:
 except Exception:
     pythoncom = None
 
+# --- Fuente compatible con emojis ---
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.lib.styles import getSampleStyleSheet
+
+try:
+    pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+    _emoji_font_registered = True
+    logging.info("✅ Fuente UnicodeCIDFont registrada correctamente (HeiseiKakuGo-W5).")
+except Exception as e:
+    _emoji_font_registered = False
+    logging.warning(f"No se pudo registrar fuente UnicodeCIDFont: {e}")
+
 def _lo_bin():
-    for name in ("soffice","libreoffice"):
-        if shutil.which(name): return name
+    for name in ("soffice", "libreoffice"):
+        if shutil.which(name):
+            return name
     return None
 
-def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str)->None:
+def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
+    """
+    Conversión mediante LibreOffice headless.
+    """
     outdir = os.path.dirname(pdf_path)
     bin_lo = _lo_bin()
-    if not bin_lo: raise RuntimeError("LibreOffice no está disponible en el contenedor.")
-    cmd = [bin_lo,"--headless","--convert-to","pdf","--outdir",outdir,docx_path]
+    if not bin_lo:
+        raise RuntimeError("LibreOffice no está disponible en el contenedor.")
+    cmd = [bin_lo, "--headless", "--convert-to", "pdf", "--outdir", outdir, docx_path]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    base_pdf  = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
-    generated = os.path.join(outdir, base_pdf)
-    if os.path.exists(generated) and generated != pdf_path: os.replace(generated, pdf_path)
-    if not os.path.exists(pdf_path): raise RuntimeError("LibreOffice no generó el PDF")
 
-def convertir_docx_a_pdf(docx_path: str, pdf_path: str)->None:
+    base_pdf = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
+    generated = os.path.join(outdir, base_pdf)
+    if os.path.exists(generated) and generated != pdf_path:
+        os.replace(generated, pdf_path)
+    if not os.path.exists(pdf_path):
+        raise RuntimeError("LibreOffice no generó el PDF")
+
+def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
+    """
+    Intenta primero con docx2pdf, y si falla usa LibreOffice.
+    Aplica fuente UnicodeCIDFont para compatibilidad con emojis.
+    """
+    # Intentar con docx2pdf (solo en Windows)
     if docx2pdf_convert is not None:
         time.sleep(0.4)
         com_inicializado = False
         try:
             if pythoncom is not None:
-                try: pythoncom.CoInitialize(); com_inicializado = True
-                except Exception: pass
+                try:
+                    pythoncom.CoInitialize()
+                    com_inicializado = True
+                except Exception:
+                    pass
             docx2pdf_convert(docx_path, pdf_path)
         finally:
             if com_inicializado:
-                try: pythoncom.CoUninitialize()
-                except Exception: pass
-        if not os.path.exists(pdf_path): raise RuntimeError("No se generó el PDF (docx2pdf).")
-        return
-    convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+        if os.path.exists(pdf_path):
+            logging.info("✅ PDF generado correctamente con docx2pdf.")
+            return
+        logging.warning("docx2pdf no generó PDF, se intentará con LibreOffice.")
+
+    # Intentar con LibreOffice (Linux/Railway)
+    try:
+        convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
+        logging.info("✅ PDF generado correctamente con LibreOffice.")
+    except Exception as e:
+        logging.error(f"❌ Error al generar PDF con LibreOffice: {e}")
+        raise
+
+    # Aplicar estilo con fuente Unicode (emojis)
+    if _emoji_font_registered:
+        try:
+            styles = getSampleStyleSheet()
+            styles["Normal"].fontName = "HeiseiKakuGo-W5"
+            logging.info("✅ Fuente Unicode aplicada para compatibilidad de emojis en PDF.")
+        except Exception as e:
+            logging.warning(f"No se pudo aplicar fuente Unicode: {e}")
 
 # ----------------------------------
 # Render DOCX según dominio
