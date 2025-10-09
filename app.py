@@ -321,7 +321,7 @@ def build_urls(filename_docx: str, filename_pdf: str):
     return _bypass(docx_url), _bypass(pdf_url)
 
 # ----------------------------------
-# DOCX -> PDF (con soporte para emojis y texto completo)
+# DOCX -> PDF y PDF directo (ReportLab)
 # ----------------------------------
 try:
     from docx2pdf import convert as docx2pdf_convert
@@ -332,87 +332,226 @@ try:
 except Exception:
     pythoncom = None
 
-# --- Fuente compatible con emojis ---
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.lib.styles import getSampleStyleSheet
-
+# ---- ReportLab (PDF directo con emojis)
 try:
-    pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
-    _emoji_font_registered = True
-    logging.info("✅ Fuente UnicodeCIDFont registrada correctamente (HeiseiKakuGo-W5).")
-except Exception as e:
-    _emoji_font_registered = False
-    logging.warning(f"No se pudo registrar fuente UnicodeCIDFont: {e}")
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+    REPORTLAB_OK = True
+except Exception:
+    REPORTLAB_OK = False
+
+def _register_pdf_font() -> str:
+    candidates = [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVuSans"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold"),
+        ("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "NotoSans"),
+        (os.path.join(BASE_DIR, "assets", "DejaVuSans.ttf"), "DejaVuSans"),
+        (os.path.join(BASE_DIR, "assets", "NotoSans-Regular.ttf"), "NotoSans"),
+    ]
+    chosen = None
+    for path, name in candidates:
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+                if not chosen:
+                    chosen = name
+            except Exception:
+                pass
+    return chosen or "Helvetica"
+
+def _make_styles(base_font: str):
+    styles = getSampleStyleSheet()
+    styles["Normal"].fontName = base_font
+    styles["Normal"].fontSize = 10.5
+    styles["Normal"].leading  = 14
+    styles.add(ParagraphStyle(
+        name="Titulo", parent=styles["Normal"], fontSize=22, leading=26,
+        spaceAfter=12, textColor=colors.HexColor("#224C9A")
+    ))
+    styles.add(ParagraphStyle(
+        name="Subtitulo", parent=styles["Normal"], fontSize=13.5, leading=18,
+        spaceBefore=8, spaceAfter=6, textColor=colors.HexColor("#224C9A")
+    ))
+    styles.add(ParagraphStyle(
+        name="TotalMonto", parent=styles["Normal"], fontSize=16, leading=20, alignment=2
+    ))
+    styles.add(ParagraphStyle(
+        name="TotalTitulo", parent=styles["Normal"], fontSize=16, leading=20, alignment=0,
+        textColor=colors.HexColor("#224C9A")
+    ))
+    return styles
+
+def render_pdf_with_reportlab(info: dict, pdf_path: str):
+    if not REPORTLAB_OK:
+        raise RuntimeError("ReportLab no disponible")
+    font_base = _register_pdf_font()
+    styles = _make_styles(font_base)
+
+    doc = SimpleDocTemplate(pdf_path, pagesize=A4,
+                            leftMargin=36, rightMargin=36, topMargin=40, bottomMargin=36)
+    elems = []
+    elems.append(Paragraph("Cotización de Servicios", styles["Titulo"]))
+    elems.append(Spacer(1, 6))
+
+    # Cabecera 2 columnas
+    cliente_lines = [
+        "<b>Datos del Cliente</b>",
+        info.get("cliente",""),
+        info.get("direccion",""),
+        info.get("comuna",""),
+        info.get("contacto",""),
+        info.get("email",""),
+    ]
+    emisor_lines = [
+        "<b>Datos del Emisor</b>",
+        "SMART PLAGAS E.I.R.L.",
+        "+56 9 5816 6055",
+        "contacto@smartplagas.cl",
+        "www.smartplagas.cl"
+    ]
+    t_header = Table([[Paragraph("<br/>".join(cliente_lines), styles["Normal"]),
+                       Paragraph("<br/>".join(emisor_lines), styles["Normal"]]],
+                     colWidths=[doc.width*0.55, doc.width*0.45])
+    t_header.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    elems.append(t_header)
+    elems.append(Spacer(1, 10))
+
+    # Descripción
+    elems.append(Paragraph("DESCRIPCIÓN:", styles["Subtitulo"]))
+    servicio_label = info.get("servicio_label","")
+    dominio = _dominio_servicio(servicio_label)
+    if dominio == "plagas":
+        desc = f"🪲 {servicio_label} – instalación de estaciones cebaderas e informe sanitario."
+    elif dominio == "piscinas":
+        desc = f"💧 {servicio_label}"
+    elif dominio == "camaras":
+        desc = f"📷 {servicio_label} – {info.get('tipo_camara','')}"
+    else:
+        desc = servicio_label
+    elems.append(Paragraph(desc, styles["Normal"]))
+    elems.append(Spacer(1, 8))
+
+    # Tabla principal
+    total_int = precio_total(info)
+    total_txt = _fmt_money_clp(total_int)
+    if dominio == "plagas":
+        headers = ["SERVICIO", "M2", "TOTAL"]
+        m2 = info.get("m2", 0)
+        try:
+            m2txt = str(int(float(m2))) if float(m2).is_integer() else str(m2)
+        except Exception:
+            m2txt = str(m2)
+        rows = [[servicio_label, m2txt, total_txt]]
+    elif dominio == "piscinas":
+        headers = ["SERVICIO", "M3", "TOTAL"]
+        m3 = _volumen_estimado_m3(info)
+        m3txt = str(int(m3)) if m3 and float(m3).is_integer() else (str(m3) if m3 else "—")
+        rows = [[servicio_label, m3txt, total_txt]]
+    elif dominio == "camaras":
+        headers = ["SERVICIO", "CANTIDAD", "TOTAL"]
+        _, _, qty, unit_ap, area = calcular_total_camaras(
+            info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara",""),
+        )
+        serv_txt = f"{servicio_label} ({area}) – { _fmt_money_clp(unit_ap) } c/u"
+        rows = [[serv_txt, str(qty), total_txt]]
+    else:
+        headers = ["SERVICIO", "TOTAL"]
+        rows = [[servicio_label, total_txt]]
+
+    data = [headers] + rows
+    if len(headers) == 3:
+        widths = [doc.width*0.55, doc.width*0.15, doc.width*0.30]
+    elif len(headers) == 2:
+        widths = [doc.width*0.70, doc.width*0.30]
+    else:
+        widths = [doc.width/len(headers)] * len(headers)
+
+    tabla = Table(data, colWidths=widths, hAlign='LEFT')
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2D6CC3")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('FONTNAME', (0,0), (-1,-1), font_base),
+        ('FONTSIZE', (0,0), (-1,-1), 10.5),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    elems.append(tabla)
+    elems.append(Spacer(1, 10))
+
+    total_tbl = Table([[Paragraph("TOTAL", styles["TotalTitulo"]),
+                        Paragraph(total_txt, styles["TotalMonto"])]],
+                      colWidths=[doc.width*0.5, doc.width*0.5])
+    total_tbl.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+    elems.append(total_tbl)
+    elems.append(Spacer(1, 10))
+
+    # Condiciones con emojis
+    condiciones_html = """
+💰 <b>Reserva del servicio:</b> Para confirmar la visita y reservar la atención, se solicita un anticipo del 50% del valor total.<br/>
+💳 <b>El saldo:</b> Se paga al término del trabajo, junto con la entrega de la documentación sanitaria correspondiente.<br/>
+🏦 <b>Forma de pago:</b> Reserva por transferencia bancaria y saldo por transferencia o tarjeta de débito.<br/>
+📅 <b>Vigencia de la cotización:</b> 7 días hábiles.<br/>
+🧾 <b>El servicio de Control de Plagas incluye:</b><br/>
+&nbsp;&nbsp;📄 Informe técnico del servicio<br/>
+&nbsp;&nbsp;📍 Plano de ubicación de estaciones cebaderas<br/>
+&nbsp;&nbsp;🧴 Certificado de aplicación y productos utilizados
+    """.strip()
+    elems.append(Paragraph(condiciones_html, styles["Normal"]))
+
+    doc.build(elems)
 
 def _lo_bin():
-    for name in ("soffice", "libreoffice"):
+    for name in ("soffice","libreoffice"):
         if shutil.which(name):
             return name
     return None
 
-def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
-    """
-    Conversión mediante LibreOffice headless.
-    """
+def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str)->None:
     outdir = os.path.dirname(pdf_path)
     bin_lo = _lo_bin()
-    if not bin_lo:
-        raise RuntimeError("LibreOffice no está disponible en el contenedor.")
-    cmd = [bin_lo, "--headless", "--convert-to", "pdf", "--outdir", outdir, docx_path]
+    if not bin_lo: raise RuntimeError("LibreOffice no está disponible en el contenedor.")
+    cmd = [bin_lo,"--headless","--convert-to","pdf","--outdir",outdir,docx_path]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    base_pdf = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
+    base_pdf  = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
     generated = os.path.join(outdir, base_pdf)
-    if os.path.exists(generated) and generated != pdf_path:
-        os.replace(generated, pdf_path)
-    if not os.path.exists(pdf_path):
-        raise RuntimeError("LibreOffice no generó el PDF")
+    if os.path.exists(generated) and generated != pdf_path: os.replace(generated, pdf_path)
+    if not os.path.exists(pdf_path): raise RuntimeError("LibreOffice no generó el PDF")
 
-def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
-    """
-    Intenta primero con docx2pdf, y si falla usa LibreOffice.
-    Aplica fuente UnicodeCIDFont para compatibilidad con emojis.
-    """
-    # Intentar con docx2pdf (solo en Windows)
+def convertir_docx_a_pdf(docx_path: str, pdf_path: str)->None:
     if docx2pdf_convert is not None:
         time.sleep(0.4)
         com_inicializado = False
         try:
             if pythoncom is not None:
-                try:
-                    pythoncom.CoInitialize()
-                    com_inicializado = True
-                except Exception:
-                    pass
+                try: pythoncom.CoInitialize(); com_inicializado = True
+                except Exception: pass
             docx2pdf_convert(docx_path, pdf_path)
         finally:
             if com_inicializado:
-                try:
-                    pythoncom.CoUninitialize()
-                except Exception:
-                    pass
-        if os.path.exists(pdf_path):
-            logging.info("✅ PDF generado correctamente con docx2pdf.")
-            return
-        logging.warning("docx2pdf no generó PDF, se intentará con LibreOffice.")
+                try: pythoncom.CoUninitialize()
+                except Exception: pass
+        if not os.path.exists(pdf_path): raise RuntimeError("No se generó el PDF (docx2pdf).")
+        return
+    convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
-    # Intentar con LibreOffice (Linux/Railway)
-    try:
-        convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
-        logging.info("✅ PDF generado correctamente con LibreOffice.")
-    except Exception as e:
-        logging.error(f"❌ Error al generar PDF con LibreOffice: {e}")
-        raise
-
-    # Aplicar estilo con fuente Unicode (emojis)
-    if _emoji_font_registered:
+def _try_build_pdf(docx_path: str, pdf_path: str, info: dict):
+    """Primero intenta ReportLab (emojis), si falla usa DOCX→PDF."""
+    if REPORTLAB_OK:
         try:
-            styles = getSampleStyleSheet()
-            styles["Normal"].fontName = "HeiseiKakuGo-W5"
-            logging.info("✅ Fuente Unicode aplicada para compatibilidad de emojis en PDF.")
+            render_pdf_with_reportlab(info, pdf_path)
+            return
         except Exception as e:
-            logging.warning(f"No se pudo aplicar fuente Unicode: {e}")
+            logging.warning(f"ReportLab falló; usando fallback DOCX->PDF. Detalle: {e}")
+    convertir_docx_a_pdf(docx_path, pdf_path)
 
 # ----------------------------------
 # Render DOCX según dominio
@@ -596,7 +735,7 @@ def handle_generate():
 
     try:
         generar_docx_desde_plantilla(docx_path, info)
-        convertir_docx_a_pdf(docx_path, pdf_path)
+        _try_build_pdf(docx_path, pdf_path, info)
     except Exception as e:
         return jsonify(ok=False, error="doc_generate_failed", detail=str(e)), 500
 
@@ -751,7 +890,7 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
     docx_path, pdf_path = os.path.join(FILES_DIR, docx_name), os.path.join(FILES_DIR, pdf_name)
     try:
         generar_docx_desde_plantilla(docx_path, info)
-        convertir_docx_a_pdf(docx_path, pdf_path)
+        _try_build_pdf(docx_path, pdf_path, info)
     except Exception as e:
         _reply(resp, "⚠️ No pude generar tu documento: "+str(e)); return
 
