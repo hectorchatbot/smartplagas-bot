@@ -413,10 +413,34 @@ def render_pdf_with_reportlab(info: dict, pdf_path: str):
         "contacto@smartplagas.cl",
         "www.smartplagas.cl"
     ]
-    t_header = Table([[Paragraph("<br/>".join(cliente_lines), styles["Normal"]),
-                       Paragraph("<br/>".join(emisor_lines), styles["Normal"]]],
-                     colWidths=[doc.width*0.55, doc.width*0.45])
-    t_header.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    # Fila con datos del cliente y del emisor
+    cliente_lines = [
+        "<b>Datos del Cliente</b>",
+        info.get("cliente",""),
+        info.get("direccion",""),
+        info.get("comuna",""),
+        info.get("contacto",""),
+        info.get("email",""),
+    ]
+    emisor_lines = [
+        "<b>Datos del Emisor</b>",
+        "SMART PLAGAS E.I.R.L.",
+        "+56 9 5816 6055",
+        "contacto@smartplagas.cl",
+        "www.smartplagas.cl",
+    ]
+
+    header_row = [
+        Paragraph("<br/>".join(cliente_lines), styles["Normal"]),
+        Paragraph("<br/>".join(emisor_lines),  styles["Normal"]),
+    ]
+    t_header = Table(
+        [header_row],
+        colWidths=[doc.width * 0.55, doc.width * 0.45]
+    )
+    t_header.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
     elems.append(t_header)
     elems.append(Spacer(1, 10))
 
@@ -424,14 +448,16 @@ def render_pdf_with_reportlab(info: dict, pdf_path: str):
     elems.append(Paragraph("DESCRIPCIÓN:", styles["Subtitulo"]))
     servicio_label = info.get("servicio_label","")
     dominio = _dominio_servicio(servicio_label)
+
     if dominio == "plagas":
-        desc = f"🪲 {servicio_label} – instalación de estaciones cebaderas e informe sanitario."
+        desc = f"🪲 {servicio_label} | instalación de estaciones cebaderas e informe sanitario."
     elif dominio == "piscinas":
         desc = f"💧 {servicio_label}"
     elif dominio == "camaras":
-        desc = f"📷 {servicio_label} – {info.get('tipo_camara','')}"
+        desc = f"📷 {servicio_label} | {info.get('tipo_camara','')}"
     else:
         desc = servicio_label
+
     elems.append(Paragraph(desc, styles["Normal"]))
     elems.append(Spacer(1, 8))
 
