@@ -162,6 +162,68 @@ def _fmt_money_clp(v:int)->str:
     return f"${v:,}".replace(",", ".")
 
 # ----------------------------------
+# CÁMARAS: tarifas por cámara instalada (mano de obra) – Región de La Araucanía
+# ----------------------------------
+CAM_PRECIOS = {
+    "alambricas":   {"interior": 70000,  "exterior": 90000},
+    "inalambricas": {"interior": 60000,  "exterior": 80000},
+    "solares":      {"exterior": 150000},  # sólo exterior
+    "dvr":          {"interior": 75000,  "exterior": 95000},  # Con grabador DVR – Grabación local
+}
+
+def _descuento_por_cantidad(qty: int) -> float:
+    """Factor multiplicador por volumen."""
+    if qty >= 5: return 0.85
+    if qty >= 3: return 0.90
+    if qty == 2: return 0.95
+    return 1.00
+
+def _infer_area_from_text(txt: str, tipo_camara: str) -> str:
+    """Deduce interior/exterior desde el texto de áreas. 'solares' siempre exterior."""
+    if (tipo_camara or "").lower().startswith("sola"):
+        return "exterior"
+    t = (txt or "").lower()
+    exterior_words = ("exterior", "patio", "jardin", "jardín", "porton", "portón",
+                      "entrada", "estacionamiento", "perimetro", "perímetro", "terraza", "muro")
+    return "exterior" if any(w in t for w in exterior_words) else "interior"
+
+def _canon_tipo_camara(s: str) -> str:
+    s = s or ""
+    s = s.strip().lower()
+    if "dvr" in s or "grabador" in s:             return "dvr"
+    if "inalam" in s or "wi fi" in s or "wi-fi" in s or "wifi" in s: return "inalambricas"
+    if "sola" in s:                                return "solares"
+    return "alambricas"
+
+def _cantidad_aproximada(opcion: str) -> int:
+    """'1 - 2' -> 2, '3 - 5' -> 4, 'Más de 5' -> 6, fallback 1."""
+    t = (opcion or "").lower()
+    if "1" in t and "2" in t: return 2
+    if "3" in t and "5" in t: return 4
+    if "mas" in t or "más" in t or "5" in t: return 6
+    m = re.search(r"\d+", t)
+    return int(m.group(0)) if m else 1
+
+def calcular_total_camaras(tipo_camara_humano: str, area_vigilar: str, cantidad_opcion: str) -> tuple[int, str, int, int, str]:
+    """
+    Retorna (total_clp, tipo_canon, qty, precio_unit_aplicado, area_final)
+    """
+    tipo = _canon_tipo_camara(tipo_camara_humano)
+    qty  = _cantidad_aproximada(cantidad_opcion)
+    area = _infer_area_from_text(area_vigilar, tipo)
+
+    tabla = CAM_PRECIOS.get(tipo, {})
+    if area not in tabla:
+        # si el tipo no admite esa área (ej. solares), usamos la disponible
+        area = next(iter(tabla.keys()), "exterior")
+
+    base_unit = int(tabla[area])
+    factor = _descuento_por_cantidad(qty)
+    unit_aplicado = int(round(base_unit * factor))
+    total = unit_aplicado * qty
+    return total, tipo, qty, unit_aplicado, area
+
+# ----------------------------------
 # Utilidades de normalización / helpers
 # ----------------------------------
 def _strip_accents_and_symbols(text: str) -> str:
@@ -271,6 +333,13 @@ def precio_total(info: dict) -> int:
         return _precio_piscina_por_tramo(key, m3)
     elif dominio == "plagas":
         return precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
+    elif dominio == "camaras":
+        total, _, _, _, _ = calcular_total_camaras(
+            info.get("tipo_camara",""),
+            info.get("area_vigilar",""),
+            info.get("cantidad_camara",""),
+        )
+        return total
     else:
         return 0
 
@@ -474,18 +543,37 @@ def handle_generate():
         return jsonify(ok=False, error="doc_generate_failed", detail=str(e)), 500
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
-    total = _fmt_money_clp(precio_total(info))
+    total_int = precio_total(info)
+    total = _fmt_money_clp(total_int)
 
     dominio = _dominio_servicio(info.get("servicio_label",""))
     medidas_line = ""
+    detalle_line = ""
     if dominio == "piscinas":
-        medidas_line = f"*Superficie:* {info['m2']} m²\n"
+        # intenta incluir m³ si hay profundidad/m2
+        try:
+            vol = _volumen_estimado_m3(info)
+            if vol > 0:
+                medidas_line = f"*Superficie:* {info['m2']} m² | *Volumen:* {vol} m³\n"
+            else:
+                medidas_line = f"*Superficie:* {info['m2']} m²\n"
+        except Exception:
+            medidas_line = f"*Superficie:* {info['m2']} m²\n"
     elif dominio == "plagas":
         medidas_line = f"*Superficie tratada:* {info['m2']} m²\n"
+    elif dominio == "camaras":
+        # recalcula para obtener detalles unitarios
+        tot, tipo, qty, unit_ap, area = calcular_total_camaras(
+            info.get("tipo_camara",""),
+            info.get("area_vigilar",""),
+            info.get("cantidad_camara",""),
+        )
+        detalle_line = f"*Cámaras:* {info.get('tipo_camara','')} ({area}) x {qty}  — unit: {_fmt_money_clp(unit_ap)}\n"
 
     partes = [
         "✅ *Nueva solicitud recibida*\n",
         f"*Servicio:* {info['servicio_label']}\n",
+        detalle_line,
         f"*Cliente:* {info['cliente']}\n",
         medidas_line,
         f"*Ubicación:* {info['direccion']}\n",
@@ -589,8 +677,14 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
         "email":     data.get("email",""),
         "to_whatsapp": from_wa if from_wa.startswith("whatsapp:") else ""
     }
+    # Piscinas
     info["tamano_piscina"]=data.get("tamano_piscina","")
     info["profundidad"]=data.get("profundidad","")  # para volumen m3 si viene
+    # Cámaras (nuevo)
+    info["tipo_camara"]     = data.get("tipo_camara","")
+    info["cantidad_camara"] = data.get("cantidad_camara","")
+    info["area_vigilar"]    = data.get("area_vigilar","")
+    # Contacto
     info["telefono"]=data.get("telefono","")
     return info
 
@@ -609,32 +703,38 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
     except Exception as e:
         _reply(resp, "⚠️ No pude generar tu documento: "+str(e)); return
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
+
+    dominio = _dominio_servicio(info.get("servicio_label",""))
     total_int = precio_total(info)
     total_txt = _fmt_money_clp(total_int)
 
-    dominio = _dominio_servicio(info.get("servicio_label",""))
+    # Mensaje amigable según dominio
     medidas_txt = ""
-    vol_txt = ""
+    detalle_line = ""
     try:
-        prof = None
-        if "profundidad" in info and str(info["profundidad"]).strip():
-            prof = float(str(info["profundidad"]).replace(",", "."))
         if dominio == "piscinas":
-            if prof is not None and float(info.get("m2", 0)) > 0:
+            prof = float(str(info.get("profundidad","") or "0").replace(",", ".")) if str(info.get("profundidad","")).strip() else 0.0
+            if prof > 0 and float(info.get("m2",0)) > 0:
                 vol_calc = round(float(info["m2"]) * prof, 1)
-                vol_txt = f"💧 *Volumen estimado:* {vol_calc} m³\n"
-            medidas_txt = f"{vol_txt}🧱 *Superficie:* {info.get('m2', 0)} m²\n"
+                medidas_txt = f"💧 *Volumen estimado:* {vol_calc} m³\n🧱 *Superficie:* {info.get('m2', 0)} m²\n"
+            else:
+                medidas_txt = f"🧱 *Superficie:* {info.get('m2', 0)} m²\n"
         elif dominio == "plagas":
             medidas_txt = f"🏠 *Superficie tratada:* {info.get('m2', 0)} m²\n"
-        else:
-            medidas_txt = ""
+        elif dominio == "camaras":
+            tot, tipo, qty, unit_ap, area = calcular_total_camaras(
+                info.get("tipo_camara",""),
+                info.get("area_vigilar",""),
+                info.get("cantidad_camara",""),
+            )
+            detalle_line = f"*Cámaras:* {info.get('tipo_camara','')} ({area}) x {qty}  — unit: {_fmt_money_clp(unit_ap)}\n"
     except Exception:
-        medidas_txt = ""
+        pass
 
     detalle_p=f"\n🧮 Tamaño piscina: {info['tamano_piscina']}" if info.get("tamano_piscina") else ""
     msg=(f"📄 He preparado tu estimado.\n"
          f"*Servicio:* {info['servicio_label']}{detalle_p}\n"
-         f"{medidas_txt}"
+         f"{detalle_line}{medidas_txt}"
          f"💵 *Estimado:* {total_txt} CLP\n"
          f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
          f"📎 *PDF:* {pdf_url}\n"
@@ -642,16 +742,24 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
          f"¿Te agendo una visita esta semana? Responde *SI* o *NO*.")
     _reply(resp, msg)
 
+    # Cliente: PDF adjunto (y opcionalmente DOCX como link)
     if SEND_PDF and info.get("to_whatsapp"):
         send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
             send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
-    dominio = _dominio_servicio(info.get("servicio_label",""))
+    # Admin: resumen + PDF + enlace al DOCX
     if dominio == "piscinas":
         medida_admin = f" | m²: {info.get('m2',0)}"
     elif dominio == "plagas":
         medida_admin = f" | m² tratados: {info.get('m2',0)}"
+    elif dominio == "camaras":
+        tot, tipo, qty, unit_ap, area = calcular_total_camaras(
+            info.get("tipo_camara",""),
+            info.get("area_vigilar",""),
+            info.get("cantidad_camara",""),
+        )
+        medida_admin = f" | cámaras: {info.get('tipo_camara','')} ({area}) x {qty} unit:{_fmt_money_clp(unit_ap)}"
     else:
         medida_admin = ""
     resumen_admin=(
