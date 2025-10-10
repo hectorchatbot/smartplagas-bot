@@ -835,7 +835,7 @@ def _rango_to_m2(r:str)->float:
     s = _strip_accents_and_symbols(r)
     if "menos" in s or "<" in s: return 80.0
     if "100" in s and "200" in s: return 150.0
-    if "mas" in s or ">" in s o r "200" in s: return 220.0
+    if "mas" in s or ">" in s or "200" in s: return 220.0
     m = re.search(r"(\d{2,4})", r)
     return float(m.group(1)) if m else 0.0
 
