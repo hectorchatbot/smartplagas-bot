@@ -332,7 +332,7 @@ try:
 except Exception:
     pythoncom = None
 
-# ---- ReportLab (PDF directo con emojis)
+# ---- ReportLab (PDF directo sin emojis)
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
@@ -397,23 +397,7 @@ def render_pdf_with_reportlab(info: dict, pdf_path: str):
     elems.append(Paragraph("Cotización de Servicios", styles["Titulo"]))
     elems.append(Spacer(1, 6))
 
-    # Cabecera 2 columnas
-    cliente_lines = [
-        "<b>Datos del Cliente</b>",
-        info.get("cliente",""),
-        info.get("direccion",""),
-        info.get("comuna",""),
-        info.get("contacto",""),
-        info.get("email",""),
-    ]
-    emisor_lines = [
-        "<b>Datos del Emisor</b>",
-        "SMART PLAGAS E.I.R.L.",
-        "+56 9 5816 6055",
-        "contacto@smartplagas.cl",
-        "www.smartplagas.cl"
-    ]
-    # Fila con datos del cliente y del emisor
+    # Cabecera: datos cliente / emisor (2 columnas)
     cliente_lines = [
         "<b>Datos del Cliente</b>",
         info.get("cliente",""),
@@ -434,27 +418,22 @@ def render_pdf_with_reportlab(info: dict, pdf_path: str):
         Paragraph("<br/>".join(cliente_lines), styles["Normal"]),
         Paragraph("<br/>".join(emisor_lines),  styles["Normal"]),
     ]
-    t_header = Table(
-        [header_row],
-        colWidths=[doc.width * 0.55, doc.width * 0.45]
-    )
-    t_header.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-    ]))
+    t_header = Table([header_row], colWidths=[doc.width * 0.55, doc.width * 0.45])
+    t_header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
     elems.append(t_header)
     elems.append(Spacer(1, 10))
 
-    # Descripción
+    # Descripción (sin emojis)
     elems.append(Paragraph("DESCRIPCIÓN:", styles["Subtitulo"]))
     servicio_label = info.get("servicio_label","")
     dominio = _dominio_servicio(servicio_label)
 
     if dominio == "plagas":
-        desc = f"🪲 {servicio_label} | instalación de estaciones cebaderas e informe sanitario."
+        desc = f"{servicio_label} | instalación de estaciones cebaderas e informe sanitario."
     elif dominio == "piscinas":
-        desc = f"💧 {servicio_label}"
+        desc = f"{servicio_label}"
     elif dominio == "camaras":
-        desc = f"📷 {servicio_label} | {info.get('tipo_camara','')}"
+        desc = f"{servicio_label} | {info.get('tipo_camara','')}"
     else:
         desc = servicio_label
 
@@ -520,16 +499,16 @@ def render_pdf_with_reportlab(info: dict, pdf_path: str):
     elems.append(total_tbl)
     elems.append(Spacer(1, 10))
 
-    # Condiciones con emojis
+    # Condiciones (sin emojis)
     condiciones_html = """
-💰 <b>Reserva del servicio:</b> Para confirmar la visita y reservar la atención, se solicita un anticipo del 50% del valor total.<br/>
-💳 <b>El saldo:</b> Se paga al término del trabajo, junto con la entrega de la documentación sanitaria correspondiente.<br/>
-🏦 <b>Forma de pago:</b> Reserva por transferencia bancaria y saldo por transferencia o tarjeta de débito.<br/>
-📅 <b>Vigencia de la cotización:</b> 7 días hábiles.<br/>
-🧾 <b>El servicio de Control de Plagas incluye:</b><br/>
-&nbsp;&nbsp;📄 Informe técnico del servicio<br/>
-&nbsp;&nbsp;📍 Plano de ubicación de estaciones cebaderas<br/>
-&nbsp;&nbsp;🧴 Certificado de aplicación y productos utilizados
+<b>Reserva del servicio:</b> Para confirmar la visita y reservar la atención, se solicita un anticipo del 50% del valor total.<br/>
+<b>El saldo:</b> Se paga al término del trabajo, junto con la entrega de la documentación sanitaria correspondiente.<br/>
+<b>Forma de pago:</b> Reserva por transferencia bancaria y saldo por transferencia o tarjeta de débito.<br/>
+<b>Vigencia de la cotización:</b> 7 días hábiles.<br/>
+<b>El servicio de Control de Plagas incluye:</b><br/>
+&nbsp;&nbsp;- Informe técnico del servicio<br/>
+&nbsp;&nbsp;- Plano de ubicación de estaciones cebaderas<br/>
+&nbsp;&nbsp;- Certificado de aplicación y productos utilizados
     """.strip()
     elems.append(Paragraph(condiciones_html, styles["Normal"]))
 
@@ -570,7 +549,7 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str)->None:
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
 def _try_build_pdf(docx_path: str, pdf_path: str, info: dict):
-    """Primero intenta ReportLab (emojis), si falla usa DOCX→PDF."""
+    """Primero intenta ReportLab (rápido, consistente); si falla usa DOCX→PDF."""
     if REPORTLAB_OK:
         try:
             render_pdf_with_reportlab(info, pdf_path)
@@ -856,7 +835,7 @@ def _rango_to_m2(r:str)->float:
     s = _strip_accents_and_symbols(r)
     if "menos" in s or "<" in s: return 80.0
     if "100" in s and "200" in s: return 150.0
-    if "mas" in s or ">" in s or "200" in s: return 220.0
+    if "mas" in s or ">" in s o r "200" in s: return 220.0
     m = re.search(r"(\d{2,4})", r)
     return float(m.group(1)) if m else 0.0
 
@@ -951,9 +930,9 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
          f"{detalle_line}{medidas_txt}"
          f"💵 *Estimado:* {total_txt} CLP\n"
          f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
-         f"📎 *PDF:* {pdf_url}\n"
-         f"📄 *DOCX:* {docx_url}\n\n"
-         f"¿Te agendo una visita esta semana? Responde *SI* o *NO*.")
+         f"📎 *PDF:* {pdf_url}\n")
+    if SEND_DOC:
+        msg += f"📄 *DOCX:* {docx_url}\n\n"
     _reply(resp, msg)
 
     if SEND_PDF and info.get("to_whatsapp"):
