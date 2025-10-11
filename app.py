@@ -404,23 +404,15 @@ def _select_template_path(info: dict) -> str:
     raise FileNotFoundError("No se encontraron plantillas DOCX en /templates ni en /out")
 
 
-def generar_docx_desde_plantilla(path: str, info: dict) -> str:
-    """
-    Genera el DOCX a partir de la plantilla seleccionada y devuelve la ruta de la plantilla usada.
-    """
+def generar_docx_desde_plantilla(path: str, info: dict)->None:
     tpl_path = _select_template_path(info)
-    app.logger.info(f"[TPL] usando plantilla: {tpl_path}")
-
     if not os.path.exists(tpl_path):
         raise FileNotFoundError(f"Plantilla no encontrada: {tpl_path}")
 
-    tpl = DocxTemplate(tpl_path)
-
-    # Dominio y total
     dom = _dominio_servicio(info.get("servicio_label",""))
     total_int = precio_total(info)
 
-    # Contexto base (plantillas sin bucles)
+    # ====== Contexto base para plantillas UNIFICADAS ======
     ctx = {
         "fecha": info["fecha"],
         "cliente": info["cliente"],
@@ -428,44 +420,66 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         "comuna": info.get("comuna",""),
         "contacto": info["contacto"],
         "email": info["email"],
+
+        # Campos usados en cabecera/descripcion
         "servicio": info["servicio_label"],
+        "descripcion": "",
+
+        # Campos de la tabla
+        "linea_servicio": "",
+        "linea_medida": "",   # <--- NUEVO: va en la columna "MEDIDA"
+        "linea_total": "",
+
+        # Totales
+        "total": _fmt_money_clp(total_int),
+        "precio": _fmt_money_clp(total_int),
+
+        # Back-compat (si tu .docx antiguo los tuviera en algún lado)
         "m2": "",
         "m3": "",
         "camaras": "",
-        "descripcion": "",
-        "linea_servicio": "",
-        "linea_cantidad": "",
-        "linea_total": "",
-        "total": _fmt_money_clp(total_int),
-        "precio": _fmt_money_clp(total_int),
     }
 
     if dom == "plagas":
+        # m2
         try:
             m2_val = float(info.get("m2", 0))
-            ctx["m2"] = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
+            m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            ctx["m2"] = str(info.get("m2", ""))
-        ctx["descripcion"]    = f"{info['servicio_label']} — {ctx['m2']} m²" if ctx["m2"] else info["servicio_label"]
-        ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_cantidad"] = "1"
-        ctx["linea_total"]    = _fmt_money_clp(total_int)
+            m2_txt = str(info.get("m2", ""))
+        ctx["m2"] = m2_txt
+        ctx["descripcion"]     = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
+        ctx["linea_servicio"]  = info["servicio_label"]
+        ctx["linea_medida"]    = (f"{m2_txt} m²" if m2_txt else "")
+        ctx["linea_total"]     = _fmt_money_clp(total_int)
 
     elif dom == "piscinas":
+        # m2 y m3 (estimado)
         m3_val = _volumen_estimado_m3(info)
-        ctx["m3"] = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
-        if info.get("m2"):
-            try:
-                m2_val = float(info["m2"])
-                ctx["m2"] = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
-            except Exception:
-                ctx["m2"] = str(info.get("m2",""))
-        ctx["descripcion"]    = f"{info['servicio_label']}" + (f" — {ctx['m2']} m²" if ctx["m2"] else "") + (f" — {ctx['m3']} m³" if ctx["m3"] else "")
-        ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_cantidad"] = "1"
-        ctx["linea_total"]    = _fmt_money_clp(total_int)
+        try:
+            m2_val = float(info.get("m2") or 0)
+            m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val) if m2_val else ""
+        except Exception:
+            m2_txt = str(info.get("m2","")) if info.get("m2") else ""
+        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+
+        ctx["m2"] = m2_txt
+        ctx["m3"] = m3_txt
+        ctx["descripcion"]     = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "") + (f" — {m3_txt} m³" if m3_txt else "")
+        ctx["linea_servicio"]  = info["servicio_label"]
+        # Columna unificada “MEDIDA”
+        if m2_txt and m3_txt:
+            ctx["linea_medida"] = f"{m2_txt} m² — {m3_txt} m³"
+        elif m2_txt:
+            ctx["linea_medida"] = f"{m2_txt} m²"
+        elif m3_txt:
+            ctx["linea_medida"] = f"{m3_txt} m³"
+        else:
+            ctx["linea_medida"] = ""
+        ctx["linea_total"]     = _fmt_money_clp(total_int)
 
     elif dom == "camaras":
+        # tipo/área y cantidad
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
@@ -474,18 +488,19 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         ctx["precio"]         = _fmt_money_clp(tot)
         ctx["descripcion"]    = f"{tipo} ({area}) x {qty}"
         ctx["linea_servicio"] = f"Cámaras {tipo} ({area})"
-        ctx["linea_cantidad"] = str(qty)
+        ctx["linea_medida"]   = f"x {qty}"        # <--- la MEDIDA aquí es cantidad
         ctx["linea_total"]    = _fmt_money_clp(qty * unit_ap)
 
     else:
+        # genérico
         ctx["descripcion"]    = info["servicio_label"]
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_cantidad"] = "1"
+        ctx["linea_medida"]   = ""                # si no aplica
         ctx["linea_total"]    = _fmt_money_clp(total_int)
 
+    tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
     tpl.save(path)
-    return tpl_path
 
 # -----------------------------------------------------------------------------
 # WhatsApp helpers
