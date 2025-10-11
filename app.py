@@ -353,42 +353,56 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
     """
-    Selecciona la mejor plantilla disponible según el dominio (plagas/piscinas/cámaras).
-    Con fallback: si no existe la específica, usa cualquier .docx de /templates.
+    Busca primero en /templates y si no hay nada, también en /out (FILES_DIR),
+    por cualquier .docx que parezca plantilla.
     """
-    dom = _dominio_servicio(info.get("servicio_label",""))
+    dom = _dominio_servicio(info.get("servicio_label","")) or "otro"
 
-    prefer = []
-    if dom == "plagas":
-        prefer = ["templatescotizacion_plagas.docx"]
-    elif dom == "piscinas":
-        prefer = ["templatescotizacion_piscinas.docx"]
-    elif dom == "camaras":
-        prefer = ["templatescotizacion_camaras.docx"]
-
-    # Fallbacks genéricos (por si cambió el nombre)
-    prefer += [
+    prefer_por_dom = {
+        "plagas":   ["templatescotizacion_plagas.docx"],
+        "piscinas": ["templatescotizacion_piscinas.docx"],
+        "camaras":  ["templatescotizacion_camaras.docx"],
+    }
+    prefer = prefer_por_dom.get(dom, []) + [
         "templatescotizacion_template.docx",
         "templatescotizacion_plagas.docx",
         "templatescotizacion_piscinas.docx",
         "templatescotizacion_camaras.docx",
     ]
 
-    # 1) Busca por nombres preferidos
-    for name in prefer:
-        p = os.path.join(BASE_DIR, "templates", name)
-        if os.path.exists(p):
-            return p
+    dirs_a_buscar = [
+        os.path.join(BASE_DIR, "templates"),
+        FILES_DIR,  # <--- NUEVO: también mira en /out por si subiste por /upload
+    ]
 
-    # 2) Como último recurso: toma cualquier .docx en /templates
-    tdir = os.path.join(BASE_DIR, "templates")
-    if os.path.isdir(tdir):
-        for fname in os.listdir(tdir):
-            if fname.lower().endswith(".docx"):
-                return os.path.join(tdir, fname)
+    # 1) por nombres preferidos
+    for d in dirs_a_buscar:
+        for name in prefer:
+            p = os.path.join(d, name)
+            if os.path.exists(p):
+                app.logger.info(f"[TPL] Usando plantilla preferida: {p}")
+                return p
 
-    # 3) Sin nada: error explícito
-    raise FileNotFoundError("No se encontraron plantillas DOCX en /templates")
+    # 2) cualquier .docx que contenga 'template' en el nombre
+    for d in dirs_a_buscar:
+        if os.path.isdir(d):
+            for fname in os.listdir(d):
+                if fname.lower().endswith(".docx") and "template" in fname.lower():
+                    p = os.path.join(d, fname)
+                    app.logger.info(f"[TPL] Usando plantilla genérica: {p}")
+                    return p
+
+    # 3) cualquier .docx
+    for d in dirs_a_buscar:
+        if os.path.isdir(d):
+            for fname in os.listdir(d):
+                if fname.lower().endswith(".docx"):
+                    p = os.path.join(d, fname)
+                    app.logger.info(f"[TPL] Usando cualquier DOCX encontrado: {p}")
+                    return p
+
+    raise FileNotFoundError("No se encontraron plantillas DOCX en /templates ni en /out")
+
 
 def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     """
@@ -684,25 +698,23 @@ def redis_ping():
 def health():
     try:
         tdir = os.path.join(BASE_DIR, "templates")
-        exists = os.path.isdir(tdir)
-        listing = []
-        if exists:
-            listing = sorted([f for f in os.listdir(tdir)])
+        odir = FILES_DIR
+        t_listing = sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []
+        o_listing = sorted(os.listdir(odir)) if os.path.isdir(odir) else []
     except Exception as e:
-        exists = False
-        listing = [f"error_listdir: {e}"]
+        t_listing, o_listing = [f"error: {e}"], []
 
     lo_ok = bool(_lo_bin())
     engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
     return jsonify({
         "ok": True,
         "service": "smartplagas-bot",
-        "version": APP_VERSION,
         "time": datetime.datetime.utcnow().isoformat()+"Z",
         "base_url": public_base_from_request(),
-        "templates_dir": os.path.join(BASE_DIR, "templates"),
-        "templates_exists": exists,
-        "templates_listing": listing,
+        "templates_dir": tdir,
+        "templates_listing": t_listing,
+        "out_dir": odir,
+        "out_listing": o_listing,
         "pdf_engine": engine,
     }), 200
 
