@@ -122,9 +122,9 @@ PRECIOS = {
 }
 TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
-    "piscina_plan_intermedio_m3":  [3900,3400,3100,0],
-    "piscina_mantencion_bomba_m3": [3200,3000,2800,0],
-    "piscina_shock_m3":            [1500,1300,1100,0],
+    "piscina_plan_intermedio_m3":  [3900,3400,3100,2900],
+    "piscina_mantencion_bomba_m3": [3200,3000,2800,2600],
+    "piscina_shock_m3":            [1500,1300,1100,900],
     "piscina_diagnostico_total":   [30000,35000,40000,45000],
     "piscina_cambio_arena_total":  [90000,140000,200000,300000],
 }
