@@ -8,8 +8,12 @@ from docxtpl import DocxTemplate
 from werkzeug.utils import secure_filename
 import redis
 
+# -----------------------------------------------------------------------------
+# Config básica / logging
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 load_dotenv(override=False)
+APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", "dev-local")
 
 # -----------------------------------------------------------------------------
 # App + CORS
@@ -136,7 +140,10 @@ CAM_PRECIOS = {
 }
 
 def _fmt_money_clp(v:int)->str:
-    return f"${v:,}".replace(",", ".")
+    try:
+        return f"${int(v):,}".replace(",", ".")
+    except Exception:
+        return "$0"
 
 def _descuento_por_cantidad(qty: int) -> float:
     if qty >= 5: return 0.85
@@ -209,7 +216,7 @@ def _canon_piscina_key(label: str) -> str:
     if ("shock" in s) or ("clor" in s):                                   return "piscina_shock_m3"
     if ("diagn" in s):                                                    return "piscina_diagnostico_total"
     if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
-    return ""  # ↓ tendremos fallback a plan_intermedio
+    return ""  # fallback se resuelve más abajo
 
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
@@ -220,7 +227,7 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     return int(tabla[-1])
 
 def _volumen_estimado_m3(info: dict) -> float:
-    # 1) m3/m3_explicit
+    # 1) m3 explícito
     for k in ("m3","volumen","volumen_m3"):
         v = str(info.get(k, "") or "").strip()
         if v:
@@ -253,7 +260,6 @@ def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
 def precio_total(info: dict) -> int:
     dominio = _dominio_servicio(info.get("servicio_label",""))
     if dominio == "piscinas":
-        # Permite override con servicio_precio; si no, intenta mapear y si falla, plan intermedio
         key = (info.get("servicio_precio") or "").strip() \
               or _canon_piscina_key(info.get("servicio_label","")) \
               or "piscina_plan_intermedio_m3"
@@ -343,23 +349,64 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
 # -----------------------------------------------------------------------------
-# Render DOCX (SIN BUCLES en las plantillas)
+# Selección de plantilla + Render DOCX (SIN BUCLES)
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
+    """
+    Selecciona la mejor plantilla disponible según el dominio (plagas/piscinas/cámaras).
+    Con fallback: si no existe la específica, usa cualquier .docx de /templates.
+    """
     dom = _dominio_servicio(info.get("servicio_label",""))
-    if dom == "plagas":   return TEMPLATE_PLAGAS
-    if dom == "piscinas": return TEMPLATE_PISCINAS
-    if dom == "camaras":  return TEMPLATE_CAMARAS
-    return TEMPLATE_PLAGAS
 
-def generar_docx_desde_plantilla(path: str, info: dict)->None:
+    prefer = []
+    if dom == "plagas":
+        prefer = ["templatescotizacion_plagas.docx"]
+    elif dom == "piscinas":
+        prefer = ["templatescotizacion_piscinas.docx"]
+    elif dom == "camaras":
+        prefer = ["templatescotizacion_camaras.docx"]
+
+    # Fallbacks genéricos (por si cambió el nombre)
+    prefer += [
+        "templatescotizacion_template.docx",
+        "templatescotizacion_plagas.docx",
+        "templatescotizacion_piscinas.docx",
+        "templatescotizacion_camaras.docx",
+    ]
+
+    # 1) Busca por nombres preferidos
+    for name in prefer:
+        p = os.path.join(BASE_DIR, "templates", name)
+        if os.path.exists(p):
+            return p
+
+    # 2) Como último recurso: toma cualquier .docx en /templates
+    tdir = os.path.join(BASE_DIR, "templates")
+    if os.path.isdir(tdir):
+        for fname in os.listdir(tdir):
+            if fname.lower().endswith(".docx"):
+                return os.path.join(tdir, fname)
+
+    # 3) Sin nada: error explícito
+    raise FileNotFoundError("No se encontraron plantillas DOCX en /templates")
+
+def generar_docx_desde_plantilla(path: str, info: dict) -> str:
+    """
+    Genera el DOCX a partir de la plantilla seleccionada y devuelve la ruta de la plantilla usada.
+    """
     tpl_path = _select_template_path(info)
+    app.logger.info(f"[TPL] usando plantilla: {tpl_path}")
+
     if not os.path.exists(tpl_path):
         raise FileNotFoundError(f"Plantilla no encontrada: {tpl_path}")
 
+    tpl = DocxTemplate(tpl_path)
+
+    # Dominio y total
     dom = _dominio_servicio(info.get("servicio_label",""))
     total_int = precio_total(info)
 
+    # Contexto base (plantillas sin bucles)
     ctx = {
         "fecha": info["fecha"],
         "cliente": info["cliente"],
@@ -422,9 +469,9 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
         ctx["linea_cantidad"] = "1"
         ctx["linea_total"]    = _fmt_money_clp(total_int)
 
-    tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
     tpl.save(path)
+    return tpl_path
 
 # -----------------------------------------------------------------------------
 # WhatsApp helpers
@@ -480,11 +527,11 @@ def normalize_payload(data: dict) -> dict:
     contacto  = _safe(data.get("nomape_A")        or data.get("contacto")  or data.get("nombre"))
     email     = _safe(data.get("correoelect")     or data.get("email"))
 
-    # NUEVO: pasar piscina y overrides si vienen
+    # Piscinas y overrides
     profundidad    = _safe(data.get("profundidad"))
     tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaño_piscina"))
     m3_explicit    = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
-    servicio_precio_override = _safe(data.get("servicio_precio"))  # admite override (p. ej. piscina_plan_intermedio_m3)
+    servicio_precio_override = _safe(data.get("servicio_precio"))
 
     try:
         m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
@@ -515,12 +562,12 @@ def normalize_payload(data: dict) -> dict:
         "email": email,
         "to_whatsapp": to_wa,
 
-        # NUEVO: mantener estos campos para piscinas
+        # Piscinas
         "profundidad": profundidad,
         "tamano_piscina": tamano_piscina,
     }
 
-    # Si vino m3 explícito y es numérico, lo guardamos (para _volumen_estimado_m3)
+    # Si vino m3 explícito válido, guárdalo
     try:
         if m3_explicit:
             info["m3"] = float(str(m3_explicit).replace(",", "."))
@@ -552,9 +599,7 @@ def handle_generate():
         return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
 
-    if not any(os.path.exists(p) for p in (TEMPLATE_PLAGAS, TEMPLATE_PISCINAS, TEMPLATE_CAMARAS)):
-        return jsonify(ok=False, error="template_missing", detail="No se encontraron plantillas DOCX en /templates"), 500
-
+    # Motor de PDF
     if (docx2pdf_convert is None) and (not _lo_bin()):
         return jsonify(ok=False, error="pdf_engine_missing",
                        detail="No hay Word/docx2pdf ni LibreOffice disponibles para convertir a PDF."), 500
@@ -566,10 +611,21 @@ def handle_generate():
     docx_path, pdf_path = os.path.join(FILES_DIR, docx_name), os.path.join(FILES_DIR, pdf_name)
 
     try:
-        generar_docx_desde_plantilla(docx_path, info)
+        tpl_used = generar_docx_desde_plantilla(docx_path, info)
+        app.logger.info(f"[DOCX] generado con plantilla: {tpl_used} -> {docx_path}")
+
         convertir_docx_a_pdf(docx_path, pdf_path)
+        app.logger.info(f"[PDF] generado: {pdf_path}")
+
     except Exception as e:
-        return jsonify(ok=False, error="doc_generate_failed", detail=str(e)), 500
+        app.logger.exception("doc_generate_failed")
+        return jsonify(
+            ok=False,
+            error="doc_generate_failed",
+            detail=str(e),
+            tpl_used=locals().get("tpl_used"),
+            paths={"docx": docx_path, "pdf": pdf_path},
+        ), 500
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
     total_int = precio_total(info)
@@ -612,7 +668,7 @@ def handle_generate():
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
-                   to_wa=info.get("to_whatsapp",""), twilio=sids), 200
+                   to_wa=info.get("to_whatsapp",""), twilio=sids, debug={"tpl_used": tpl_used}), 200
 
 # -----------------------------------------------------------------------------
 # Rutas básicas
@@ -625,7 +681,38 @@ def redis_ping():
     except Exception as e: return jsonify(ok=False, error=str(e)), 500
 
 @app.get("/health")
-def health(): return jsonify(ok=True, service="smartplagas-bot", time=datetime.datetime.utcnow().isoformat()+"Z")
+def health():
+    try:
+        tdir = os.path.join(BASE_DIR, "templates")
+        exists = os.path.isdir(tdir)
+        listing = []
+        if exists:
+            listing = sorted([f for f in os.listdir(tdir)])
+    except Exception as e:
+        exists = False
+        listing = [f"error_listdir: {e}"]
+
+    lo_ok = bool(_lo_bin())
+    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
+    return jsonify({
+        "ok": True,
+        "service": "smartplagas-bot",
+        "version": APP_VERSION,
+        "time": datetime.datetime.utcnow().isoformat()+"Z",
+        "base_url": public_base_from_request(),
+        "templates_dir": os.path.join(BASE_DIR, "templates"),
+        "templates_exists": exists,
+        "templates_listing": listing,
+        "pdf_engine": engine,
+    }), 200
+
+@app.get("/whoami")
+def whoami():
+    return jsonify({
+        "app": "smartplagas-bot",
+        "version": APP_VERSION,
+        "routes": ["/", "/whoami", "/health", "/generate", "/upload", "/files/<name>", "/webhook", "/reload-flow"]
+    }), 200
 
 @app.route("/files/<path:filename>")
 def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
@@ -668,28 +755,8 @@ def upload_pdf():
     return jsonify(ok=True, url=url, saved=out_name), 200
 
 # -----------------------------------------------------------------------------
-# Webhook Twilio (flujo) — (se mantiene igual)
+# Webhook Twilio (simplificado: activo + reinicio)
 # -----------------------------------------------------------------------------
-FLOW_PATH = os.path.join(BASE_DIR, "chatbot-flujo.json")
-FLOW_ENABLED = True
-FLOW, FLOW_INDEX, FIRST_NODE_ID = [], {}, None
-
-def _load_flow():
-    global FLOW, FLOW_INDEX, FIRST_NODE_ID
-    FLOW_INDEX.clear(); FLOW[:] = []
-    if os.path.exists(FLOW_PATH):
-        with open(FLOW_PATH, "r", encoding="utf-8") as f: FLOW[:] = json.load(f)
-        for node in FLOW: FLOW_INDEX[str(node.get("id"))] = node
-        FIRST_NODE_ID = str(FLOW[0]["id"]) if FLOW else None
-_load_flow()
-
-def _render_template_text(text:str, data:dict)->str:
-    def repl(m): return str(data.get(m.group(1).strip(),""))
-    return re.sub(r"\{([^}]+)\}", repl, text or "")
-
-def _reply(resp: MessagingResponse, text:str):
-    if text: resp.message(text)
-
 @app.route("/webhook", methods=["GET", "POST", "HEAD"])
 def webhook():
     if request.method != "POST":
@@ -703,14 +770,13 @@ def webhook():
         if not _dedup_should_process(msg_sid):
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
-        skey = _sess_key(data)
         resp = MessagingResponse()
 
-        if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches","reiniciar"}:
-            _reply(resp, "Hola 👋. Envía tu solicitud o escribe algo como:\nservicio: Piscinas - Plan Intermedio; m2: 56; profundidad: 1.4; direccion: ...")
+        if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches","reiniciar","start","reset"}:
+            resp.message("Hola 👋. Endpoint activo. Para cotizar por REST usa /generate (POST JSON).")
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        _reply(resp, "🤖 Endpoint activo. Usa /generate para generar cotizaciones.")
+        resp.message("🤖 Endpoint activo. Usa /generate para generar cotizaciones.")
         return str(resp), 200, {"Content-Type":"application/xml"}
 
     except Exception:
@@ -723,7 +789,8 @@ def webhook():
 @app.post("/reload-flow")
 def reload_flow():
     try:
-        _load_flow(); return jsonify(ok=True, count=len(FLOW)), 200
+        # Mantengo compatibilidad, aunque el flujo no se usa en este archivo simplificado
+        return jsonify(ok=True, count=0), 200
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
