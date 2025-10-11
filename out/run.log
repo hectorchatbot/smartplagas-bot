@@ -1,0 +1,86 @@
+﻿[INFO 2025-10-10 09:06:19] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:06:19] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_090619.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_090619.pdf
+[INFO 2025-10-10 09:06:19] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:06:19] Fallo POST /generate: No se puede ejecutar el cmdlet porque falta el siguiente parámetro: OutFile. Indique un parámetro OutFile válido cuando use el parámetro PassThru e inténtelo de nuevo.
+[INFO 2025-10-10 09:11:30] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:11:30] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091130.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091130.pdf
+[INFO 2025-10-10 09:11:30] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:11:30] Fallo POST /generate: No se encuentra ningún parámetro que coincida con el nombre del parámetro 'ResponseHeadersVariable'.
+[INFO 2025-10-10 09:11:47] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:11:47] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091147.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091147.pdf
+[INFO 2025-10-10 09:11:47] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:11:47] Fallo POST /generate: No se encuentra ningún parámetro que coincida con el nombre del parámetro 'ResponseHeadersVariable'.
+[INFO 2025-10-10 09:13:06] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:13:06] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091306.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091306.pdf
+[INFO 2025-10-10 09:13:06] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:13:06] Fallo POST /generate: No se encuentra ningún parámetro que coincida con el nombre del parámetro 'ResponseHeadersVariable'.
+[INFO 2025-10-10 09:14:56] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:14:56] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091456.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091456.pdf
+[INFO 2025-10-10 09:14:56] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:14:56] Fallo POST /generate: No se encuentra ningún parámetro que coincida con el nombre del parámetro 'ResponseHeadersVariable'.
+[INFO 2025-10-10 09:18:56] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:18:56] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091856.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091856.pdf
+[INFO 2025-10-10 09:18:56] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:18:56] Fallo POST /generate: No se puede ejecutar el cmdlet porque falta el siguiente parámetro: OutFile. Indique un parámetro OutFile válido cuando use el parámetro PassThru e inténtelo de nuevo.
+[INFO 2025-10-10 09:19:49] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:19:49] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091949.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_091949.pdf
+[INFO 2025-10-10 09:19:49] POST -> https://web-production-62037.up.railway.app/generate
+[ERR  2025-10-10 09:19:49] Fallo POST /generate: No se puede ejecutar el cmdlet porque falta el siguiente parámetro: OutFile. Indique un parámetro OutFile válido cuando use el parámetro PassThru e inténtelo de nuevo.
+[INFO 2025-10-10 09:24:04] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:24:04] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_092404.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_092404.pdf
+[INFO 2025-10-10 09:24:04] POST -> https://web-production-62037.up.railway.app/generate
+[INFO 2025-10-10 09:24:05] Status=200 Content-Type=application/json
+{
+    "message":  "Campos mínimos faltantes; no se generan archivos",
+    "missing":  [
+                    "direccion"
+                ],
+    "ok":  true,
+    "received":  {
+                     "nombre":  "Juan Perez",
+                     "servicio":  "Desratizacion"
+                 }
+}
+[ERR  2025-10-10 09:24:05] JSON de /generate no trae ni 'url' vÃ¡lida ni 'docx_base64'.
+[INFO 2025-10-10 09:26:04] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:26:04] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_092604.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_092604.pdf
+[INFO 2025-10-10 09:26:04] POST -> https://web-production-62037.up.railway.app/generate
+[INFO 2025-10-10 09:26:05] Status=200 Content-Type=application/json
+{
+    "message":  "Campos mínimos faltantes; no se generan archivos",
+    "missing":  [
+                    "direccion"
+                ],
+    "ok":  true,
+    "received":  {
+                     "nombre":  "Juan Perez",
+                     "servicio":  "Desratizacion"
+                 }
+}
+[ERR  2025-10-10 09:26:05] JSON de /generate no trae ni 'url' vÃ¡lida ni 'docx_base64'.
+[INFO 2025-10-10 09:26:51] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:26:51] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_092651.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_092651.pdf
+[INFO 2025-10-10 09:26:51] POST -> https://web-production-62037.up.railway.app/generate
+[INFO 2025-10-10 09:26:51] Status=200 Content-Type=application/json
+{
+    "message":  "Campos mínimos faltantes; no se generan archivos",
+    "missing":  [
+                    "direccion"
+                ],
+    "ok":  true,
+    "received":  {
+                     "nombre":  "Juan Perez",
+                     "servicio":  "Desratizacion"
+                 }
+}
+[ERR  2025-10-10 09:26:51] JSON de /generate no trae ni 'url' vÃ¡lida ni 'docx_base64'.
+[INFO 2025-10-10 09:37:03] Inicio pipeline. GenerateUrl=https://web-production-62037.up.railway.app/generate | UploadUrl=https://web-production-62037.up.railway.app/upload
+[INFO 2025-10-10 09:37:03] OutDir=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out | DOCX=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_093703.docx | PDF=C:\Users\hecto\OneDrive\Escritorio\ServiciosChatBot\ProyectoChatBot\smartplagasbot\smartplagas-bot\out\cotizacion_20251010_093703.pdf
+[INFO 2025-10-10 09:37:03] POST -> https://web-production-62037.up.railway.app/generate
+[INFO 2025-10-10 09:37:11] Status=200 Content-Type=application/json
+[INFO 2025-10-10 09:37:11] Descargando DOCX desde URL del JSON: https://web-production-62037.up.railway.app/files/cotizacion_20251010_123704_e7b2ad.docx
+[INFO 2025-10-10 09:37:29] DOCX OK: 11270545 bytes
+[INFO 2025-10-10 09:37:29] Convirtiendo a PDF con Word...
+[INFO 2025-10-10 09:37:34] PDF generado: 4281639 bytes
+[INFO 2025-10-10 09:37:34] Subiendo PDF a https://web-production-62037.up.railway.app/upload ...
+[ERR  2025-10-10 09:37:38] Fallo al subir PDF: Se ha terminado la conexión: Error inesperado de envío.
