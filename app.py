@@ -5,18 +5,19 @@ from flask import Flask, request, jsonify, send_from_directory
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from docxtpl import DocxTemplate
+from werkzeug.utils import secure_filename
 import redis
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv(override=False)
 
-# ------------------------------
+# -----------------------------------------------------------------------------
 # App + CORS
-# ------------------------------
+# -----------------------------------------------------------------------------
 app = Flask(__name__)
 ALLOWED_ORIGIN  = os.getenv("CORS_ALLOW_ORIGIN", "*")
 ALLOWED_METHODS = "GET, POST, OPTIONS"
-ALLOWED_HEADERS = "Content-Type, ngrok-skip-browser-warning, Authorization"
+ALLOWED_HEADERS = "Content-Type, ngrok-skip-browser-warning, Authorization, X-Upload-Token"
 
 @app.after_request
 def add_cors_headers(resp):
@@ -25,17 +26,15 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Headers"] = ALLOWED_HEADERS
     return resp
 
-# ------------------------------
-# Redis (estado de sesión + dedupe)
-# ------------------------------
+# -----------------------------------------------------------------------------
+# Redis (opcional: sesión y dedupe)
+# -----------------------------------------------------------------------------
 def _obtener_redis_url():
     for key in ("REDIS_URL", "UPSTASH_REDIS_URL", "REDIS_TLS_URL", "RAILWAY_REDIS_URL"):
         v = os.getenv(key)
         if v and v.strip():
             return v.strip()
-    host = os.getenv("REDIS_HOST")
-    port = os.getenv("REDIS_PORT")
-    pwd  = os.getenv("REDIS_PASSWORD")
+    host = os.getenv("REDIS_HOST"); port = os.getenv("REDIS_PORT"); pwd = os.getenv("REDIS_PASSWORD")
     if host and port and pwd:
         esquema = "rediss" if os.getenv("REDIS_SSL", "true").lower() in ("1", "true", "yes") else "redis"
         return f"{esquema}://default:{pwd}@{host}:{port}"
@@ -62,47 +61,35 @@ _r = _conectar_redis()
 
 def _sess_key(form: dict) -> str:
     waid = (form.get("WaId") or "").strip()
-    if waid:
-        return waid
+    if waid: return waid
     return (form.get("From") or "").replace("whatsapp:", "").strip()
 
 def _sess_get(key: str):
-    if not _r:
-        return None
+    if not _r: return None
     v = _r.get(f"sess:{key}")
     return json.loads(v) if v else None
 
 def _sess_set(key: str, val: dict, ttl_sec: int = 60*60*12):
-    if not _r:
-        return None
+    if not _r: return None
     _r.set(f"sess:{key}", json.dumps(val), ex=ttl_sec)
 
 def _sess_exists(key: str) -> bool:
-    if not _r:
-        return False
+    if not _r: return False
     return _r.exists(f"sess:{key}") == 1
 
 DEDUP_TTL = 300
 def _dedup_should_process(msg_sid: str) -> bool:
-    if not _r or not msg_sid:
-        return True
+    if not _r or not msg_sid: return True
     ok = _r.set(f"dedup:{msg_sid}", "1", nx=True, ex=DEDUP_TTL)
     return bool(ok)
 
-# ----------------------------------
+# -----------------------------------------------------------------------------
 # Entorno / Twilio
-# ----------------------------------
+# -----------------------------------------------------------------------------
 TW_SID   = os.getenv("TWILIO_ACCOUNT_SID", "")
 TW_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TW_FROM  = os.getenv("TWILIO_WHATSAPP_FROM") or os.getenv("TWILIO_PHONE_NUMBER") or "whatsapp:+14155238886"
-
-ADMIN_WA = (
-    os.getenv("ADMIN_WA")
-    or os.getenv("ADMIN_WHATSAPP")
-    or os.getenv("MY_PHONE_NUMBER")
-    or "whatsapp:+56995300790"
-).strip()
-
+ADMIN_WA = (os.getenv("ADMIN_WA") or os.getenv("ADMIN_WHATSAPP") or os.getenv("MY_PHONE_NUMBER") or "whatsapp:+56995300790").strip()
 TWILIO_ENABLED = (os.getenv("TWILIO_ENABLED", "true").lower() == "true")
 
 BASE_URL = (os.getenv("BASE_URL") or os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
@@ -112,7 +99,7 @@ FILES_SUBDIR = (os.getenv("FILES_DIR", "out") or "out").strip()
 FILES_DIR    = os.path.join(BASE_DIR, FILES_SUBDIR)
 os.makedirs(FILES_DIR, exist_ok=True)
 
-# Plantillas por dominio
+# Plantillas
 TEMPLATE_PLAGAS   = os.path.join(BASE_DIR, "templates", "templatescotizacion_plagas.docx")
 TEMPLATE_PISCINAS = os.path.join(BASE_DIR, "templates", "templatescotizacion_piscinas.docx")
 TEMPLATE_CAMARAS  = os.path.join(BASE_DIR, "templates", "templatescotizacion_camaras.docx")
@@ -124,43 +111,31 @@ SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
-# ----------------------------------
-# Precios PLAGAS por m²
-# ----------------------------------
-TRAMOS = [
-    (0, 50), (51, 100), (101, 200), (201, 300),
-    (301, 500), (501, 1000), (1001, 2000), (2001, 9999999),
-]
+# -----------------------------------------------------------------------------
+# Precios y utilidades de negocio
+# -----------------------------------------------------------------------------
+TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
 PRECIOS = {
-    "desinsectacion": [37500, 47500, 65000, 80000, 105000, 165000, 270000, 440000],
-    "desratizacion":  [34000, 44000, 60000, 75000,  97500, 150000, 235000, 375000],
-    "desinfeccion":   [30000, 40000, 55000, 70000,  90000, 140000, 220000, 350000],
+    "desinsectacion":[37500,47500,65000,80000,105000,165000,270000,440000],
+    "desratizacion": [34000,44000,60000,75000, 97500,150000,235000,375000],
+    "desinfeccion":  [30000,40000,55000,70000, 90000,140000,220000,350000],
 }
-
-# ----------------------------------
-# PISCINAS por m³ (30% utilidad ya incluida)
-# ----------------------------------
-TRAMOS_M3 = [(0, 25), (26, 50), (51, 100), (101, 999999)]
+TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
-    "piscina_plan_intermedio_m3":  [3900, 3400, 3100, 0],
-    "piscina_mantencion_bomba_m3": [3200, 3000, 2800, 0],
-    "piscina_shock_m3":            [1500, 1300, 1100, 0],
-    "piscina_diagnostico_total":   [30000, 35000, 40000, 45000],
-    "piscina_cambio_arena_total":  [90000, 140000, 200000, 300000],
+    "piscina_plan_intermedio_m3":  [3900,3400,3100,0],
+    "piscina_mantencion_bomba_m3": [3200,3000,2800,0],
+    "piscina_shock_m3":            [1500,1300,1100,0],
+    "piscina_diagnostico_total":   [30000,35000,40000,45000],
+    "piscina_cambio_arena_total":  [90000,140000,200000,300000],
 }
-
-def _fmt_money_clp(v:int)->str:
-    return f"${v:,}".replace(",", ".")
-
-# ----------------------------------
-# CÁMARAS: tarifas por cámara instalada (mano de obra)
-# ----------------------------------
 CAM_PRECIOS = {
-    "alambricas":   {"interior": 70000,  "exterior": 90000},
-    "inalambricas": {"interior": 60000,  "exterior": 80000},
-    "solares":      {"exterior": 150000},                 # solo exterior
-    "dvr":          {"interior": 75000,  "exterior": 95000},
+    "alambricas":   {"interior":70000,"exterior":90000},
+    "inalambricas": {"interior":60000,"exterior":80000},
+    "solares":      {"exterior":150000},
+    "dvr":          {"interior":75000,"exterior":95000},
 }
+
+def _fmt_money_clp(v:int)->str: return f"${v:,}".replace(",", ".")
 
 def _descuento_por_cantidad(qty: int) -> float:
     if qty >= 5: return 0.85
@@ -169,8 +144,7 @@ def _descuento_por_cantidad(qty: int) -> float:
     return 1.00
 
 def _infer_area_from_text(txt: str, tipo_camara: str) -> str:
-    if (tipo_camara or "").lower().startswith("sola"):
-        return "exterior"
+    if (tipo_camara or "").lower().startswith("sola"): return "exterior"
     t = (txt or "").lower()
     exterior_words = ("exterior","patio","jardin","jardín","porton","portón","entrada","estacionamiento","perimetro","perímetro","terraza","muro")
     return "exterior" if any(w in t for w in exterior_words) else "interior"
@@ -191,20 +165,15 @@ def _cantidad_aproximada(opcion: str) -> int:
     return int(m.group(0)) if m else 1
 
 def calcular_total_camaras(tipo_camara_humano: str, area_vigilar: str, cantidad_opcion: str):
-    """Retorna (total, tipo_canon, qty, unit_aplicado, area_final)"""
     tipo = _canon_tipo_camara(tipo_camara_humano)
     qty  = _cantidad_aproximada(cantidad_opcion)
     area = _infer_area_from_text(area_vigilar, tipo)
     tabla = CAM_PRECIOS.get(tipo, {})
-    if area not in tabla:
-        area = next(iter(tabla.keys()), "exterior")
+    if area not in tabla: area = next(iter(tabla.keys()), "exterior")
     base_unit = int(tabla[area])
     unit = int(round(base_unit * _descuento_por_cantidad(qty)))
     return unit * qty, tipo, qty, unit, area
 
-# ----------------------------------
-# Helpers de normalización
-# ----------------------------------
 def _strip_accents_and_symbols(text: str) -> str:
     t = text or ""
     t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)
@@ -246,8 +215,7 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     if not tabla: return 0
     m2n = int(float(m2) if m2 else 0)
     for idx, (lo, hi) in enumerate(TRAMOS):
-        if lo <= m2n <= hi:
-            return int(tabla[idx])
+        if lo <= m2n <= hi: return int(tabla[idx])
     return int(tabla[-1])
 
 def _volumen_estimado_m3(info: dict) -> float:
@@ -320,9 +288,9 @@ def build_urls(filename_docx: str, filename_pdf: str):
         return u
     return _bypass(docx_url), _bypass(pdf_url)
 
-# ----------------------------------
-# DOCX -> PDF (solo LibreOffice)
-# ----------------------------------
+# -----------------------------------------------------------------------------
+# DOCX -> PDF
+# -----------------------------------------------------------------------------
 try:
     from docx2pdf import convert as docx2pdf_convert
 except Exception:
@@ -353,42 +321,30 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
         raise RuntimeError("LibreOffice no generó el PDF")
 
 def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
-    """
-    En Windows local puedes usar Word/docx2pdf.
-    En Railway (Linux), usa LibreOffice headless.
-    """
-    # Camino Windows opcional
     if os.name == "nt" and docx2pdf_convert is not None:
         time.sleep(0.2)
-        com_inicializado = False
+        com_init = False
         try:
             if pythoncom is not None:
-                try:
-                    pythoncom.CoInitialize()
-                    com_inicializado = True
-                except Exception:
-                    pass
+                try: pythoncom.CoInitialize(); com_init = True
+                except Exception: pass
             docx2pdf_convert(docx_path, pdf_path)
         finally:
-            if com_inicializado:
-                try:
-                    pythoncom.CoUninitialize()
-                except Exception:
-                    pass
-        if os.path.exists(pdf_path):
-            return
-        # Si algo falla en Windows, caemos a LO igualmente
+            if com_init:
+                try: pythoncom.CoUninitialize()
+                except Exception: pass
+        if os.path.exists(pdf_path): return
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
-# ----------------------------------
-# Render DOCX según dominio
-# ----------------------------------
+# -----------------------------------------------------------------------------
+# Render DOCX
+# -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
     dom = _dominio_servicio(info.get("servicio_label",""))
     if dom == "plagas":   return TEMPLATE_PLAGAS
     if dom == "piscinas": return TEMPLATE_PISCINAS
     if dom == "camaras":  return TEMPLATE_CAMARAS
-    return TEMPLATE_PLAGAS  # fallback
+    return TEMPLATE_PLAGAS
 
 def generar_docx_desde_plantilla(path: str, info: dict)->None:
     tpl_path = _select_template_path(info)
@@ -398,7 +354,6 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
     dom = _dominio_servicio(info.get("servicio_label",""))
     total_int = precio_total(info)
 
-    # Contexto base (común)
     ctx = {
         "fecha": info["fecha"],
         "cliente": info["cliente"],
@@ -408,9 +363,7 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
         "email": info["email"],
         "servicio": info["servicio_label"],
         "precio": _fmt_money_clp(total_int),
-        # Campos que alguna plantilla podría ignorar:
-        "m2": "", "m3": "",
-        "camaras": "",
+        "m2": "", "m3": "", "camaras": "",
         "cantidad_12": 0, "cantidad_34": 0, "cantidad_56": 0,
         "precio_12": "", "precio_34": "", "precio_56": "",
         "total": _fmt_money_clp(total_int),
@@ -430,26 +383,22 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
         ctx["camaras"] = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
-        # Mapea a columnas (1–2 / 3–4 / 5–6)
         c12 = qty if qty <= 2 else 0
         c34 = qty if 3 <= qty <= 4 else 0
         c56 = qty if qty >= 5 else 0
-        ctx["cantidad_12"] = c12
-        ctx["cantidad_34"] = c34
-        ctx["cantidad_56"] = c56
-        ctx["precio_12"]   = _fmt_money_clp(unit_ap * c12) if c12 else ""
-        ctx["precio_34"]   = _fmt_money_clp(unit_ap * c34) if c34 else ""
-        ctx["precio_56"]   = _fmt_money_clp(unit_ap * c56) if c56 else ""
-        ctx["total"]       = _fmt_money_clp(tot)
-        ctx["precio"]      = _fmt_money_clp(tot)
+        ctx["cantidad_12"] = c12; ctx["cantidad_34"] = c34; ctx["cantidad_56"] = c56
+        ctx["precio_12"] = _fmt_money_clp(unit_ap * c12) if c12 else ""
+        ctx["precio_34"] = _fmt_money_clp(unit_ap * c34) if c34 else ""
+        ctx["precio_56"] = _fmt_money_clp(unit_ap * c56) if c56 else ""
+        ctx["total"] = _fmt_money_clp(tot); ctx["precio"] = _fmt_money_clp(tot)
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
     tpl.save(path)
 
-# ----------------------------------
-# Envío WhatsApp helpers
-# ----------------------------------
+# -----------------------------------------------------------------------------
+# WhatsApp helpers
+# -----------------------------------------------------------------------------
 def send_whatsapp_text(to_wa: str, body: str, delay: float = 0.0):
     result = {}
     if not (twilio and TWILIO_ENABLED and to_wa and body):
@@ -486,9 +435,9 @@ def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
         sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
     return sids
 
-# ----------------------------------
-# Normalización payload externo
-# ----------------------------------
+# -----------------------------------------------------------------------------
+# Normalización de payload externo y generate
+# -----------------------------------------------------------------------------
 def normalize_payload(data: dict) -> dict:
     data = data or {}
     servicio  = _safe(data.get("servicioinicial") or data.get("servicio") or data.get("servicio_inicial"))
@@ -500,18 +449,22 @@ def normalize_payload(data: dict) -> dict:
     contacto  = _safe(data.get("nomape_A")        or data.get("contacto")  or data.get("nombre"))
     fono      = _safe(data.get("fono")            or data.get("telefono")  or data.get("phone"))
     email     = _safe(data.get("correoelect")     or data.get("email"))
+
     try:
         m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
+
     to_wa = ""
     if fono:
         digits = "".join(ch for ch in fono if ch.isdigit())
         if   digits.startswith("56"): to_wa = f"whatsapp:+{digits}"
         elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
         elif digits:                  to_wa = f"whatsapp:+{digits}"
+
     servicio_label  = servicio or "Desinsectación"
     servicio_precio = _canon_servicio_para_precios(servicio_label)
+
     return {
         "fecha": datetime.date.today().strftime("%d-%m-%Y"),
         "servicio_label": servicio_label, "servicio_precio": servicio_precio,
@@ -533,9 +486,6 @@ def _read_payload_any():
     if request.form: return {k:v for k,v in request.form.items()}
     return {}
 
-# ----------------------------------
-# Cotización (REST)
-# ----------------------------------
 def handle_generate():
     payload = _read_payload_any()
     info = normalize_payload(payload)
@@ -544,11 +494,8 @@ def handle_generate():
         return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
 
-    # Verificar que haya alguna plantilla utilizable
-    tpl_any = any(os.path.exists(p) for p in (TEMPLATE_PLAGAS, TEMPLATE_PISCINAS, TEMPLATE_CAMARAS))
-    if not tpl_any:
-        return jsonify(ok=False, error="template_missing",
-                       detail="No se encontraron plantillas DOCX en /templates"), 500
+    if not any(os.path.exists(p) for p in (TEMPLATE_PLAGAS, TEMPLATE_PISCINAS, TEMPLATE_CAMARAS)):
+        return jsonify(ok=False, error="template_missing", detail="No se encontraron plantillas DOCX en /templates"), 500
 
     if (docx2pdf_convert is None) and (not _lo_bin()):
         return jsonify(ok=False, error="pdf_engine_missing",
@@ -571,15 +518,11 @@ def handle_generate():
     total = _fmt_money_clp(total_int)
 
     dominio = _dominio_servicio(info.get("servicio_label",""))
-    medidas_line = ""
-    detalle_line = ""
+    medidas_line = ""; detalle_line = ""
     if dominio == "piscinas":
         try:
             vol = _volumen_estimado_m3(info)
-            if vol > 0:
-                medidas_line = f"*Superficie:* {info.get('m2',0)} m² | *Volumen:* {vol} m³\n"
-            else:
-                medidas_line = f"*Superficie:* {info.get('m2',0)} m²\n"
+            medidas_line = f"*Superficie:* {info.get('m2',0)} m²" + (f" | *Volumen:* {vol} m³" if vol > 0 else "") + "\n"
         except Exception:
             medidas_line = f"*Superficie:* {info.get('m2',0)} m²\n"
     elif dominio == "plagas":
@@ -615,9 +558,9 @@ def handle_generate():
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
                    to_wa=info.get("to_whatsapp",""), twilio=sids), 200
 
-# ----------------------------------
+# -----------------------------------------------------------------------------
 # FLUJO (JSON)
-# ----------------------------------
+# -----------------------------------------------------------------------------
 FLOW_PATH = os.path.join(BASE_DIR, "chatbot-flujo.json")
 FLOW_ENABLED = True
 FLOW, FLOW_INDEX, FIRST_NODE_ID = [], {}, None
@@ -631,9 +574,6 @@ def _load_flow():
         FIRST_NODE_ID = str(FLOW[0]["id"]) if FLOW else None
 _load_flow()
 
-# ----------------------------------
-# Helpers de flujo
-# ----------------------------------
 def _render_template_text(text:str, data:dict)->str:
     def repl(m): return str(data.get(m.group(1).strip(),""))
     return re.sub(r"\{([^}]+)\}", repl, text or "")
@@ -657,7 +597,7 @@ def _rango_to_m2(r:str)->float:
     s = _strip_accents_and_symbols(r)
     if "menos" in s or "<" in s: return 80.0
     if "100" in s and "200" in s: return 150.0
-    if "mas" in s or ">" in s or "200" in s: return 220.0
+    if "mas" in s or "más" in s or "200" in s: return 220.0
     m = re.search(r"(\d{2,4})", r)
     return float(m.group(1)) if m else 0.0
 
@@ -690,24 +630,19 @@ def _session_info_to_generator_fields(data:dict, from_wa:str)->dict:
         "detalles":  data.get("area_vigilar",""),
         "contacto":  data.get("nombre",""),
         "email":     data.get("email",""),
-        "to_whatsapp": from_wa if from_wa.startswith("whatsapp:") else ""
+        "to_whatsapp": from_wa if from_wa.startswith("whatsapp:") else "",
+        "tamano_piscina": data.get("tamano_piscina",""),
+        "profundidad":    data.get("profundidad",""),
+        "tipo_camara":     data.get("tipo_camara",""),
+        "cantidad_camara": data.get("cantidad_camara",""),
+        "area_vigilar":    data.get("area_vigilar",""),
+        "telefono":        data.get("telefono",""),
     }
-    # Piscinas
-    info["tamano_piscina"]=data.get("tamano_piscina","")
-    info["profundidad"]=data.get("profundidad","")
-    # Cámaras
-    info["tipo_camara"]     = data.get("tipo_camara","")
-    info["cantidad_camara"] = data.get("cantidad_camara","")
-    info["area_vigilar"]    = data.get("area_vigilar","")
-    # Contacto
-    info["telefono"]=data.get("telefono","")
     return info
 
 def _send_estimate_and_files(resp, info, resumen_breve=""):
-    # Verificación mínima de plantillas
     if not any(os.path.exists(p) for p in (TEMPLATE_PLAGAS, TEMPLATE_PISCINAS, TEMPLATE_CAMARAS)):
-        _reply(resp, "⚠️ No se encontraron plantillas de cotización.")
-        return
+        _reply(resp, "⚠️ No se encontraron plantillas de cotización."); return
     if (docx2pdf_convert is None) and (not _lo_bin()):
         _reply(resp, "⚠️ No hay motor de PDF disponible (Word/docx2pdf o LibreOffice)."); return
 
@@ -722,12 +657,10 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
         _reply(resp, "⚠️ No pude generar tu documento: "+str(e)); return
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
-    total_int = precio_total(info)
-    total_txt = _fmt_money_clp(total_int)
+    total_int = precio_total(info); total_txt = _fmt_money_clp(total_int)
 
     dominio = _dominio_servicio(info.get("servicio_label",""))
-    medidas_txt = ""
-    detalle_line = ""
+    medidas_txt = ""; detalle_line = ""
     try:
         if dominio == "piscinas":
             prof = float(str(info.get("profundidad","") or "0").replace(",", ".")) if str(info.get("profundidad","")).strip() else 0.0
@@ -753,36 +686,89 @@ def _send_estimate_and_files(resp, info, resumen_breve=""):
          f"💵 *Estimado:* {total_txt} CLP\n"
          f"_Vigencia 7 días. Sujeto a visita técnica._\n\n"
          f"📎 *PDF:* {pdf_url}\n")
-    if SEND_DOC:
-        msg += f"📄 *DOCX:* {docx_url}\n\n"
+    if SEND_DOC: msg += f"📄 *DOCX:* {docx_url}\n\n"
     _reply(resp, msg)
 
     if SEND_PDF and info.get("to_whatsapp"):
         send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
-        if SEND_DOC:
-            send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+        if SEND_DOC: send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
-    if dominio == "piscinas":
-        medida_admin = f" | m²: {info.get('m2',0)}"
-    elif dominio == "plagas":
-        medida_admin = f" | m² tratados: {info.get('m2',0)}"
+    if dominio == "piscinas": medida_admin = f" | m²: {info.get('m2',0)}"
+    elif dominio == "plagas":  medida_admin = f" | m² tratados: {info.get('m2',0)}"
     elif dominio == "camaras":
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara",""),
         )
         medida_admin = f" | cámaras: {info.get('tipo_camara','')} ({area}) x {qty} unit:{_fmt_money_clp(unit_ap)}"
-    else:
-        medida_admin = ""
-    resumen_admin=(
-        f"👤 Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
-        f"🧰 Servicio: {info['servicio_label']}{medida_admin}\n"
-        f"📍 Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
-        f"💵 Total (estimado): {total_txt}"
-    )
+    else: medida_admin = ""
+    resumen_admin=(f"👤 Cliente: {info.get('contacto','')} | {info.get('email','')} | {info.get('telefono','')}\n"
+                   f"🧰 Servicio: {info['servicio_label']}{medida_admin}\n"
+                   f"📍 Ubicación: {info.get('direccion','')}, {info.get('comuna','')}\n"
+                   f"💵 Total (estimado): {total_txt}")
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         send_admin_copy(resumen_admin, pdf_url, docx_url)
 
-# ---- Cortafuegos para saltos de flujo
+# -----------------------------------------------------------------------------
+# Rutas básicas
+# -----------------------------------------------------------------------------
+@app.get("/")
+@app.get("/redis-ping")
+def redis_ping():
+    if not _r: return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
+    try: return jsonify(ok=True, pong=_r.ping()), 200
+    except Exception as e: return jsonify(ok=False, error=str(e)), 500
+
+@app.get("/health")
+def health(): return jsonify(ok=True, service="smartplagas-bot", time=datetime.datetime.utcnow().isoformat()+"Z")
+
+@app.route("/files/<path:filename>")
+def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
+
+# -----------------------------------------------------------------------------
+# /generate (REST)
+# -----------------------------------------------------------------------------
+@app.post("/generate")
+def generate(): return handle_generate()
+
+# -----------------------------------------------------------------------------
+# /upload único (acepta Authorization: Bearer y X-Upload-Token)
+# -----------------------------------------------------------------------------
+UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
+
+@app.route("/upload", methods=["POST", "OPTIONS"])
+def upload_pdf():
+    # Preflight CORS
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    # Token por Authorization: Bearer ... o X-Upload-Token
+    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not token:
+        token = request.headers.get("X-Upload-Token", "").strip()
+
+    if not UPLOAD_TOKEN or token != UPLOAD_TOKEN:
+        return jsonify(ok=False, error="unauthorized"), 401
+
+    # Acepta varias claves de archivo
+    f = request.files.get("file") or request.files.get("pdf") or request.files.get("document")
+    if not f or not f.filename:
+        return jsonify(ok=False, error="missing file"), 400
+
+    os.makedirs(FILES_DIR, exist_ok=True)
+    safe_name = secure_filename(f.filename or "archivo.pdf")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"{ts}_{safe_name}"
+    out_path = os.path.join(FILES_DIR, out_name)
+    f.save(out_path)
+
+    public = public_base_from_request().rstrip("/")
+    url = f"{public}/files/{out_name}"
+    return jsonify(ok=True, url=url, saved=out_name), 200
+
+# -----------------------------------------------------------------------------
+# Webhook de Twilio (flujo)
+# -----------------------------------------------------------------------------
+FLOW, FLOW_INDEX  # ya cargados
 CAMERA_NODE_IDS = {"1748913058876","1748913223390","1748913354726","1748913446918","1748913856796"}
 M2_NODE_ID = "1748911555017"
 
@@ -791,8 +777,7 @@ def _fix_next_hop(sess: dict, current_node: dict, next_id: str) -> str:
     servicio = _norm(servicio_raw)
     is_camera_service = ("camar" in servicio)
     logging.info(f"[next-hop] next_id={next_id} servicio='{servicio_raw}' (norm='{servicio}') is_camera={is_camera_service}")
-    if next_id in CAMERA_NODE_IDS and not is_camera_service:
-        return M2_NODE_ID
+    if next_id in CAMERA_NODE_IDS and not is_camera_service: return M2_NODE_ID
     return next_id
 
 def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = None):
@@ -802,16 +787,14 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
             _reply(resp, "Advertencia: No pude continuar el flujo. Escribe *reiniciar*.")
             return "stop"
 
-        ntype   = node.get("type")
-        content = node.get("content","")
+        ntype   = node.get("type"); content = node.get("content","")
         varname = (node.get("variableName") or "").strip()
         nextId  = str(node.get("nextId") or "")
 
         if ntype == "mensaje":
             _reply(resp, _render_template_text(content, sess["data"]))
             if not nextId:
-                if skey: _sess_set(skey, sess)
-                return "final"
+                if skey: _sess_set(skey, sess); return "final"
             sess["node_id"] = nextId
             if skey: _sess_set(skey, sess)
             continue
@@ -839,40 +822,10 @@ def _advance_flow_until_input(resp: MessagingResponse, sess: dict, skey: str = N
             if skey: _sess_set(skey, sess)
             return "stop"
 
-# ----------------------------------
-# Rutas
-# ----------------------------------
-@app.get("/")
-@app.get("/redis-ping")
-def redis_ping():
-    if not _r:
-        return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
-    try:
-        return jsonify(ok=True, pong=_r.ping()), 200
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-@app.get("/health")
-def health():
-    return jsonify(ok=True, service="smartplagas-bot", time=datetime.datetime.utcnow().isoformat()+"Z")
-
-@app.route("/files/<path:filename>")
-def files(filename):
-    return send_from_directory(FILES_DIR, filename, as_attachment=False)
-
-@app.post("/generate")
-def generate():
-    return handle_generate()
-
-# ----------------------------------
-# Selección de opciones (condicional)
-# ----------------------------------
 def _choose_option(node, body):
-    if not node or node.get("type") != "condicional":
-        return (None, None, None)
+    if not node or node.get("type") != "condicional": return (None, None, None)
     opts = node.get("options", []) or []
-    if not opts:
-        return (None, None, None)
+    if not opts: return (None, None, None)
     try:
         num = int(re.sub(r"\D", "", body))
         if 1 <= num <= len(opts):
@@ -887,14 +840,10 @@ def _choose_option(node, body):
             return (opt.get("saveAs") or None, (opt.get("text") or "").strip(), str(opt.get("nextId") or ""))
     return (None, None, None)
 
-# ----------------------------------
-# Webhook Twilio
-# ----------------------------------
 @app.route("/webhook", methods=["GET", "POST", "HEAD"])
 def webhook():
     if request.method != "POST":
         return "ok", 200, {"Content-Type": "text/plain"}
-
     try:
         data = request.form.to_dict() if not request.is_json else (request.get_json() or {})
         body = (data.get("Body") or "").strip()
@@ -911,33 +860,28 @@ def webhook():
         if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches"}:
             sess = {"node_id": FIRST_NODE_ID, "data": {}, "last_question": None, "pending_next_id": None,
                     "awaiting_option_for": None, "last_msg_sid": msg_sid}
-            _sess_set(skey, sess)
-            _advance_flow_until_input(resp, sess, skey)
+            _sess_set(skey, sess); _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         if body_lc == "reiniciar":
             sess = {"node_id": FIRST_NODE_ID, "data": {}, "last_question": None, "pending_next_id": None,
                     "awaiting_option_for": None, "last_msg_sid": msg_sid}
-            _sess_set(skey, sess)
-            _reply(resp, "🔄 Flujo reiniciado. Iniciando atención…")
+            _sess_set(skey, sess); _reply(resp, "🔄 Flujo reiniciado. Iniciando atención…")
             _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         if not _sess_exists(skey):
             sess = {"node_id": FIRST_NODE_ID, "data": {}, "last_question": None, "pending_next_id": None,
                     "awaiting_option_for": None, "last_msg_sid": None}
-            _sess_set(skey, sess)
-            _advance_flow_until_input(resp, sess, skey)
+            _sess_set(skey, sess); _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         sess = _sess_get(skey)
-
         if msg_sid and sess.get("last_msg_sid") == msg_sid:
             return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
 
         if sess.get("awaiting_option_for"):
-            node_id = str(sess["awaiting_option_for"])
-            node = FLOW_INDEX.get(node_id)
+            node_id = str(sess["awaiting_option_for"]); node = FLOW_INDEX.get(node_id)
             if not node:
                 _reply(resp, "⚠️ Ha ocurrido un error. Escribe *reiniciar* para comenzar de nuevo.")
                 return str(resp), 200, {"Content-Type":"application/xml"}
@@ -962,24 +906,17 @@ def webhook():
                     sess["data"][saveAs] = value
 
             nextId = _fix_next_hop(sess, node, nextId)
+            if saveAs == "subservicio": sess["data"]["subservicio"] = value
 
-            if saveAs == "subservicio":
-                sess["data"]["subservicio"] = value
-
-            sess["node_id"] = nextId
-            sess["awaiting_option_for"] = None
-            sess["last_msg_sid"] = msg_sid
-            _sess_set(skey, sess)
-            _advance_flow_until_input(resp, sess, skey)
+            sess["node_id"] = nextId; sess["awaiting_option_for"] = None; sess["last_msg_sid"] = msg_sid
+            _sess_set(skey, sess); _advance_flow_until_input(resp, sess, skey)
             return str(resp), 200, {"Content-Type":"application/xml"}
 
         if sess.get("last_question"):
             var = sess["last_question"]
             sess["data"][var] = body
             nextId = sess.get("pending_next_id")
-            sess["last_question"] = None
-            sess["pending_next_id"] = None
-            sess["last_msg_sid"] = msg_sid
+            sess["last_question"] = None; sess["pending_next_id"] = None; sess["last_msg_sid"] = msg_sid
 
             if var == "telefono":
                 info = _session_info_to_generator_fields(sess["data"], from_wa)
@@ -987,7 +924,6 @@ def webhook():
 
             if nextId: sess["node_id"] = str(nextId)
             _sess_set(skey, sess)
-
             if nextId: _advance_flow_until_input(resp, sess, skey)
             else: _reply(resp, "Gracias. Escribe *reiniciar* si deseas empezar otra solicitud.")
             return str(resp), 200, {"Content-Type":"application/xml"}
@@ -1001,22 +937,19 @@ def webhook():
         resp.message("Lo siento, ocurrió un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
-# ----------------------------------
-# Reload del flujo
-# ----------------------------------
+# -----------------------------------------------------------------------------
+# Reload de flujo
+# -----------------------------------------------------------------------------
 @app.post("/reload-flow")
 def reload_flow():
     try:
-        _load_flow()
-        return jsonify(ok=True, count=len(FLOW)), 200
+        _load_flow(); return jsonify(ok=True, count=len(FLOW)), 200
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
 def _log_url_map():
-    try:
-        logging.info("URL MAP:\n%s", app.url_map)
-    except Exception:
-        pass
+    try: logging.info("URL MAP:\n%s", app.url_map)
+    except Exception: pass
 
 _log_url_map()
 
