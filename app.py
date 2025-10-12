@@ -431,6 +431,7 @@ def generar_docx_desde_plantilla(path: str, info: dict)->str:
 
         "servicio": info["servicio_label"],
         "descripcion": "",
+	"clausula_seremi": "",  # se rellena solo para plagas
 
         # FILA DE LA TABLA (3 columnas)
         "linea_servicio": "",
@@ -457,6 +458,7 @@ def generar_docx_desde_plantilla(path: str, info: dict)->str:
         ctx["linea_servicio"] = info["servicio_label"]
         ctx["linea_medida"]  = m2_txt
         ctx["descripcion"]   = f"{info['servicio_label']} — {m2_txt} m²" if m2_txt else info["servicio_label"]
+	ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
         # Mostrar m² y m³ juntos en la misma celda
