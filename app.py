@@ -827,214 +827,348 @@ def upload_pdf():
     url = f"{public}/files/{out_name}"
     return jsonify(ok=True, url=url, saved=out_name), 200
 
-# -----------------------------------------------------------------------------
-# Webhook Twilio — flujo conversacional y/o texto clave:valor
-# -----------------------------------------------------------------------------
+# =====================[ FLUJO: chatbot-flujo.json ]=====================
+
+FLOW_JSON_PATH = os.getenv("FLOW_JSON_PATH", os.path.join(BASE_DIR, "chatbot-flujo.json"))
+
+def _flow_load():
+    """Carga e indexa por id (string)."""
+    try:
+        with open(FLOW_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        by_id = {}
+        for n in data:
+            nid = str(n.get("id"))
+            n["id"] = nid
+            # normalizar nextId a string si existe
+            if "nextId" in n and n["nextId"] not in (None, ""):
+                n["nextId"] = str(n["nextId"])
+            # normalizar options nextId
+            for opt in n.get("options", []) or []:
+                if "nextId" in opt and opt["nextId"] not in (None, ""):
+                    opt["nextId"] = str(opt["nextId"])
+            by_id[nid] = n
+        return by_id
+    except Exception as e:
+        app.logger.error(f"FLOW load error: {e}")
+        return {}
+
+_FLOW = _flow_load()
+
+def _flow_start_id():
+    """Primer nodo del flujo (el más bajo) o el primero de tipo 'mensaje'."""
+    if not _FLOW:
+        return None
+    # preferimos el de saludo si existe
+    for n in _FLOW.values():
+        if n.get("type") == "mensaje":
+            return n["id"]
+    # fallback: el menor id
+    return sorted(_FLOW.keys())[0]
+
+def _fmt_vars(text, vars_):
+    if not text:
+        return ""
+    try:
+        return text.format(**vars_)
+    except Exception:
+        # si falta una variable, no fallamos
+        return text
+
+def _send_menu(resp, node):
+    # Devuelve el texto del menú enumerado
+    lines = [node.get("content", "").strip()]
+    opts = node.get("options", []) or []
+    for i, o in enumerate(opts, start=1):
+        # Mantenemos el texto exacto definido en el JSON
+        lines.append(f"{i}. {o.get('text','').strip()}")
+    msg = "\n".join(lines).strip()
+    if msg:
+        resp.message(msg)
+
+def _try_pick_option(node, user_text):
+    """Interpreta la respuesta del usuario contra las options del node."""
+    opts = node.get("options", []) or []
+    txt = (user_text or "").strip().lower()
+
+    # 1) si es número 1..N
+    m = re.match(r"^\s*(\d+)\s*$", txt)
+    if m:
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(opts):
+            return opts[idx]
+
+    # 2) match por texto (sin tildes / casefold)
+    def norm(s):
+        s = s or ""
+        s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+        return re.sub(r"\s+", " ", s).strip().lower()
+
+    txtn = norm(txt)
+    for o in opts:
+        if norm(o.get("text", "")) == txtn:
+            return o
+
+    return None
+
+def _flow_emit_until_input(resp, sess):
+    """
+    Emite todos los 'mensaje' encadenados y se detiene en el primer 'pregunta' o 'condicional'.
+    Guarda en sesión el node_id donde esperar input.
+    """
+    current = sess.get("node_id") or _flow_start_id()
+    vars_ = sess.get("vars", {})
+
+    visited = set()
+    while current and current in _FLOW and current not in visited:
+        visited.add(current)
+        node = _FLOW[current]
+        ntype = node.get("type")
+
+        if ntype == "mensaje":
+            txt = _fmt_vars(node.get("content", ""), vars_)
+            if txt:
+                resp.message(txt)
+            current = node.get("nextId")
+            continue
+
+        elif ntype == "pregunta":
+            # hacemos la pregunta y paramos aquí a esperar respuesta
+            txt = _fmt_vars(node.get("content", ""), vars_)
+            if txt:
+                resp.message(txt)
+            sess["node_id"] = node["id"]
+            return
+
+        elif ntype == "condicional":
+            # enviamos menú y paramos a esperar respuesta
+            _send_menu(resp, node)
+            sess["node_id"] = node["id"]
+            return
+
+        else:
+            # tipo desconocido -> avanzamos si hay next
+            current = node.get("nextId")
+
+    # si salimos sin encontrar input, cerramos sesión (flujo terminado)
+    sess["node_id"] = None
+
+
+def _map_rango_m2_to_number(rango: str) -> int:
+    if not rango:
+        return 0
+    s = rango.lower()
+    if "menos" in s or "<" in s or "100" in s and "200" not in s:
+        return 90
+    if "100" in s and "200" in s:
+        return 150
+    if "200" in s or "más" in s or "mas" in s or ">" in s:
+        return 250
+    return 0
+
+def _compose_payload_from_vars(vars_, from_wa: str):
+    """
+    Construye el payload para generar la cotización desde las variables del flujo.
+    """
+    servicio = vars_.get("servicio", "")  # puede ser “Piscinas”, “Control de Plagas”, “Cámaras…”
+    subservicio = vars_.get("subservicio", "")
+    direccion = vars_.get("direccion", "")
+    comuna = vars_.get("comuna", "")
+    email = vars_.get("email", "")
+    telefono = vars_.get("telefono", "")
+    nombre = vars_.get("nombre", "")
+
+    # m2: puede venir por rango (rango_m2)
+    m2 = _map_rango_m2_to_number(vars_.get("rango_m2", ""))
+
+    # Piscinas
+    tamano_piscina = vars_.get("tamano_piscina", "")
+    profundidad = vars_.get("profundidad", "")
+
+    # Cámaras
+    tipo_camara = vars_.get("tipo_camara", "")
+    cantidad_camara = vars_.get("cantidad_camara", "")
+    area_vigilar = vars_.get("area_vigilar", "")
+
+    # Servicio legible
+    servicio_label = ""
+    if "piscin" in servicio.lower():
+        servicio_label = subservicio or "Piscinas"
+    elif "cámara" in servicio.lower() or "camara" in servicio.lower():
+        servicio_label = "Cámaras"
+    else:
+        # Control de plagas
+        if subservicio:
+            servicio_label = subservicio
+        else:
+            servicio_label = "Control de Plagas"
+
+    # Payload compatible con normalize_payload()
+    payload = {
+        "servicio": servicio_label,
+        "tipo_clientes": "Residencial",
+        "m2": m2,
+        "direccion": direccion,
+        "comuna": comuna,
+        "contacto": nombre,
+        "email": email,
+        "phone": telefono,   # si viene vacío, usaremos el From de WhatsApp
+        # Piscinas
+        "tamano_piscina": tamano_piscina,
+        "profundidad": profundidad,
+        # Cámaras
+        "tipo_camara": tipo_camara,
+        "cantidad_camara": cantidad_camara,
+        "area_vigilar": area_vigilar,
+    }
+
+    # si el usuario no escribió teléfono, usamos el del webhook “From”
+    if not payload.get("phone") and from_wa:
+        # llega como "whatsapp:+569xxxxxxx"
+        payload["phone"] = from_wa.replace("whatsapp:", "")
+
+    return payload
+
+def _flow_finish_and_generate(resp, form, sess):
+    """
+    Cuando el flujo termina, armamos el payload, generamos PDF/DOCX y enviamos al mismo usuario por WhatsApp.
+    Reutiliza la misma lógica de generación que /generate.
+    """
+    vars_ = sess.get("vars", {})
+    from_wa = form.get("From") or ""
+    payload = _compose_payload_from_vars(vars_, from_wa)
+
+    # Normalizamos igual que /generate
+    info = normalize_payload(payload)
+
+    # Motor PDF disponible?
+    if (docx2pdf_convert is None) and (not _lo_bin()):
+        resp.message("⚠️ No pude generar PDF por un problema interno de conversión. Intentaremos de nuevo pronto.")
+        return
+
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    uid = uuid.uuid4().hex[:6]
+    base = f"cotizacion_{ts}_{uid}"
+    docx_name, pdf_name = base + ".docx", base + ".pdf"
+    docx_path, pdf_path = os.path.join(FILES_DIR, docx_name), os.path.join(FILES_DIR, pdf_name)
+
+    try:
+        tpl_used = generar_docx_desde_plantilla(docx_path, info)
+        convertir_docx_a_pdf(docx_path, pdf_path)
+    except Exception as e:
+        app.logger.exception("gen-fail")
+        resp.message("⚠️ No pude generar la cotización. Intenta nuevamente.")
+        return
+
+    docx_url, pdf_url = build_urls(docx_name, pdf_name)
+    total_int = precio_total(info)
+    total = _fmt_money_clp(total_int)
+
+    # Resumen para el cliente
+    resumen = (
+        "✅ Cotización lista\n"
+        f"• Servicio: {info.get('servicio_label','')}\n"
+        f"• Total: {total}\n"
+        f"• PDF: {pdf_url}"
+    )
+    # Enviamos el PDF como media + resumen (y dejamos el texto con el link por si el cliente no ve el adjunto)
+    try:
+        # Mensaje con media
+        if twilio and TWILIO_ENABLED and from_wa:
+            twilio.messages.create(from_=TW_FROM, to=from_wa, body=resumen, media_url=[pdf_url])
+        else:
+            resp.message(resumen)
+    except Exception:
+        # fallback: al menos enviamos el texto
+        resp.message(resumen)
+
+    # Limpiamos sesión para no quedar esperando entradas
+    sess["node_id"] = None
+    _sess_set(_sess_key(form), sess)
+
+# =========================[ WEBHOOK con flujo ]=========================
+
 @app.route("/webhook", methods=["GET", "POST", "HEAD"])
 def webhook():
     if request.method != "POST":
         return "ok", 200, {"Content-Type": "text/plain"}
-    try:
-        data = request.form.to_dict() if not request.is_json else (request.get_json() or {})
-        body = (data.get("Body") or "").strip()
-        body_lc = body.lower()
-        msg_sid = (data.get("MessageSid") or "").strip()
-        from_wa = (data.get("From") or "").strip()  # whatsapp:+56...
 
-        if not _dedup_should_process(msg_sid):
-            return str(MessagingResponse()), 200, {"Content-Type":"application/xml"}
+    form = request.form.to_dict() if not request.is_json else (request.get_json() or {})
+    body = (form.get("Body") or "").strip()
+    body_lc = body.lower()
+    msg_sid = (form.get("MessageSid") or "").strip()
 
-        skey = _sess_key(data)
-        sess = _sess_get(skey) or _flow_reset()
+    # anti duplicados
+    if not _dedup_should_process(msg_sid):
+        return str(MessagingResponse()), 200, {"Content-Type": "application/xml"}
 
-        resp = MessagingResponse()
+    resp = MessagingResponse()
+    sess_id = _sess_key(form) or "anon"
+    sess = _sess_get(sess_id) or {"node_id": _flow_start_id(), "vars": {}}
 
-        # Comandos
-        if body_lc in {"reiniciar","reset","start"}:
-            sess = _flow_reset()
-            _sess_set(skey, sess)
-            resp.message("👋 ¡Listo! Empezamos de nuevo.\n" + _prompt_for("servicio"))
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if body_lc in {"cancelar","salir"}:
-            _sess_set(skey, _flow_reset())
-            resp.message("❌ Proceso cancelado. Escribe *reiniciar* para comenzar otra vez.")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if body_lc in {"status","estado"}:
-            info = sess.get("info",{})
-            resumen = [
-                f"• Servicio: {info.get('servicio_label','')}",
-                f"• m²: {info.get('m2','')}",
-                f"• Prof.: {info.get('profundidad','')}",
-                f"• Dirección: {info.get('direccion','')}",
-                f"• Comuna: {info.get('comuna','')}",
-                f"• Contacto: {info.get('contacto','')}",
-                f"• Email: {info.get('email','')}",
-                f"• Teléfono: {info.get('to_whatsapp','') or from_wa}",
-            ]
-            resp.message("📋 Estado actual:\n" + "\n".join(resumen))
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        # 1) ¿Viene como clave:valor? -> generar directo
-        if ":" in body and (";" in body or "\n" in body):
-            kv = _parse_kv_text(body)
-            info = normalize_payload(kv)
-            if not info.get("to_whatsapp") and from_wa.startswith("whatsapp:+"):
-                info["to_whatsapp"] = from_wa
-
-            faltan = [k for k in ("servicio_label","cliente","direccion","contacto") if not info.get(k)]
-            if faltan:
-                # caemos al flujo guiado
-                sess = _flow_reset()
-                sess["info"].update(info)
-                _sess_set(skey, sess)
-            else:
-                # Generación inmediata
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                uid = uuid.uuid4().hex[:6]
-                base = f"cotizacion_{ts}_{uid}"
-                docx_name, pdf_name = base + ".docx", base + ".pdf"
-                docx_path, pdf_path = os.path.join(FILES_DIR, docx_name), os.path.join(FILES_DIR, pdf_name)
-                try:
-                    generar_docx_desde_plantilla(docx_path, info)
-                    convertir_docx_a_pdf(docx_path, pdf_path)
-                except Exception:
-                    logging.exception("gen-fail")
-                    resp.message("⚠️ No pude generar la cotización. Intenta nuevamente.")
-                    return str(resp), 200, {"Content-Type":"application/xml"}
-
-                docx_url, pdf_url = build_urls(docx_name, pdf_name)
-                total = _fmt_money_clp(precio_total(info))
-                m = resp.message(f"✅ Cotización lista\n• Servicio: {info['servicio_label']}\n• Total: {total}\n• PDF: {pdf_url}")
-                try:
-                    m.media(pdf_url)
-                except Exception:
-                    pass
-                return str(resp), 200, {"Content-Type":"application/xml"}
-
-        # 2) Flujo guiado por pasos
-        step = sess.get("step","servicio")
-        info = sess.get("info",{})
-
-        def _advance(next_step):
-            sess["step"] = next_step
-            _sess_set(skey, sess)
-            resp.message(_prompt_for(next_step))
-
-        if step == "servicio":
-            if not body:
-                _advance("servicio"); return str(resp), 200, {"Content-Type":"application/xml"}
-            info["servicio_label"] = body
-            info["servicio_precio"] = _canon_servicio_para_precios(body)
-            sess["info"] = info
-            _advance("m2"); return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "m2":
-            try:
-                m2_val = float(body.replace(",", "."))
-            except Exception:
-                resp.message("Por favor envía un número válido para m² (ej: 56).")
-                return str(resp), 200, {"Content-Type":"application/xml"}
-            info["m2"] = m2_val
-            sess["info"] = info
-            if _needs_depth(info.get("servicio_label","")):
-                _advance("profundidad")
-            else:
-                _advance("direccion")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "profundidad":
-            if body.lower() != "omitir":
-                try:
-                    info["profundidad"] = float(body.replace(",", "."))
-                except Exception:
-                    resp.message("Profundidad inválida. Envía un número (ej: 1.4) o *omitir*.")
-                    return str(resp), 200, {"Content-Type":"application/xml"}
-            sess["info"] = info
-            _advance("direccion")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "direccion":
-            info["direccion"] = body
-            sess["info"] = info
-            _advance("comuna")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "comuna":
-            info["comuna"] = body
-            sess["info"] = info
-            _advance("contacto")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "contacto":
-            info["contacto"] = body
-            sess["info"] = info
-            _advance("email")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "email":
-            info["email"] = body
-            sess["info"] = info
-            _advance("telefono")
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        if step == "telefono":
-            digits = "".join(ch for ch in body if ch.isdigit() or ch == "+")
-            if digits.startswith("+"):
-                info["to_whatsapp"] = f"whatsapp:{digits}"
-            elif from_wa.startswith("whatsapp:+"):
-                info["to_whatsapp"] = from_wa
-            else:
-                # lo aceptamos igual
-                info["to_whatsapp"] = from_wa or ""
-            sess["info"] = info
-
-            # Generar
-            if (docx2pdf_convert is None) and (not _lo_bin()):
-                resp.message("⚠️ Motor de PDF no disponible en el servidor.")
-                return str(resp), 200, {"Content-Type":"application/xml"}
-
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            uid = uuid.uuid4().hex[:6]
-            base = f"cotizacion_{ts}_{uid}"
-            docx_name, pdf_name = base + ".docx", base + ".pdf"
-            docx_path, pdf_path = os.path.join(FILES_DIR, docx_name), os.path.join(FILES_DIR, pdf_name)
-            try:
-                generar_docx_desde_plantilla(docx_path, info)
-                convertir_docx_a_pdf(docx_path, pdf_path)
-            except Exception:
-                logging.exception("gen-fail")
-                resp.message("⚠️ No pude generar la cotización. Intenta nuevamente.")
-                return str(resp), 200, {"Content-Type":"application/xml"}
-
-            docx_url, pdf_url = build_urls(docx_name, pdf_name)
-            total = _fmt_money_clp(precio_total(info))
-            final = (
-                f"✅ Cotización lista\n"
-                f"• Servicio: {info['servicio_label']}\n"
-                f"• Total: {total}\n"
-                f"• PDF: {pdf_url}"
-            )
-            m = resp.message(final)
-            try:
-                m.media(pdf_url)
-            except Exception:
-                pass
-
-            # reset sesión para próxima solicitud
-            _sess_set(skey, _flow_reset())
-            return str(resp), 200, {"Content-Type":"application/xml"}
-
-        # fallback
-        resp.message(_prompt_for(step))
+    # Comandos de reinicio
+    if body_lc in {"reiniciar", "reset", "start", "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}:
+        sess = {"node_id": _flow_start_id(), "vars": {}}
+        _flow_emit_until_input(resp, sess)
+        _sess_set(sess_id, sess)
         return str(resp), 200, {"Content-Type":"application/xml"}
 
-    except Exception:
-        logging.exception("❌ Error en webhook")
-        resp = MessagingResponse()
-        resp.message("Lo siento, ocurrió un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
-        return str(resp), 200, {"Content-Type": "application/xml"}
+    # Si no hay flujo cargado, comportarnos como antes
+    if not _FLOW or not sess.get("node_id"):
+        resp.message("🤖 Endpoint activo. Usa /generate (POST JSON) para cotizar por REST.")
+        return str(resp), 200, {"Content-Type":"application/xml"}
+
+    current_id = sess.get("node_id")
+    node = _FLOW.get(current_id)
+
+    if not node:
+        # flujo inconsistente -> reiniciamos
+        sess = {"node_id": _flow_start_id(), "vars": {}}
+        _flow_emit_until_input(resp, sess)
+        _sess_set(sess_id, sess)
+        return str(resp), 200, {"Content-Type":"application/xml"}
+
+    vars_ = sess.get("vars", {})
+
+    # Procesamos la respuesta del usuario según el tipo del nodo actual
+    if node.get("type") == "pregunta":
+        varname = node.get("variableName", "").strip()
+        if varname:
+            vars_[varname] = body
+        next_id = node.get("nextId")
+        sess["vars"] = vars_
+        sess["node_id"] = next_id
+
+    elif node.get("type") == "condicional":
+        chosen = _try_pick_option(node, body)
+        if not chosen:
+            # no entendimos la opción -> re-enviar menú
+            _send_menu(resp, node)
+            _sess_set(sess_id, sess)
+            return str(resp), 200, {"Content-Type":"application/xml"}
+
+        save_as = chosen.get("saveAs")
+        if save_as:
+            vars_[save_as] = chosen.get("text", "")
+        sess["vars"] = vars_
+        sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+
+    else:
+        # si el nodo que espera input no es válido, avanzamos
+        sess["node_id"] = node.get("nextId")
+
+    # Emitimos hasta el próximo input
+    _flow_emit_until_input(resp, sess)
+
+    # ¿Terminó el flujo? (node_id None o no existe)
+    if not sess.get("node_id"):
+        # Enviar mensaje de “gracias” final del JSON si existe
+        # (el flujo ya lo debió enviar en _flow_emit_until_input; aquí generamos y enviamos la cotización)
+        _flow_finish_and_generate(resp, form, sess)
+
+    # Guardar sesión
+    _sess_set(sess_id, sess)
+    return str(resp), 200, {"Content-Type":"application/xml"}
 
 # -----------------------------------------------------------------------------
 @app.post("/reload-flow")
