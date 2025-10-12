@@ -412,7 +412,7 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
     dom = _dominio_servicio(info.get("servicio_label",""))
     total_int = precio_total(info)
 
-    # ====== Contexto base para plantillas UNIFICADAS ======
+    # Contexto base (las claves deben existir aunque queden vacías)
     ctx = {
         "fecha": info["fecha"],
         "cliente": info["cliente"],
@@ -421,82 +421,78 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
         "contacto": info["contacto"],
         "email": info["email"],
 
-        # Campos usados en cabecera/descripcion
         "servicio": info["servicio_label"],
         "descripcion": "",
 
-        # Campos de la tabla
+        # FILA DE LA TABLA (3 columnas)
         "linea_servicio": "",
-        "linea_medida": "",   # <--- NUEVO: va en la columna "MEDIDA"
-        "linea_total": "",
+        "linea_medida": "",   # <- esta es la que usa tu plantilla
+        "linea_total": _fmt_money_clp(total_int),
 
-        # Totales
+        # Totales al pie
         "total": _fmt_money_clp(total_int),
         "precio": _fmt_money_clp(total_int),
 
-        # Back-compat (si tu .docx antiguo los tuviera en algún lado)
+        # Por compatibilidad con plantillas antiguas
         "m2": "",
         "m3": "",
-        "camaras": "",
     }
 
     if dom == "plagas":
-        # m2
+        # M2 como medida
         try:
             m2_val = float(info.get("m2", 0))
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_txt = str(info.get("m2", ""))
+            m2_txt = str(info.get("m2","")) or ""
         ctx["m2"] = m2_txt
-        ctx["descripcion"]     = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
-        ctx["linea_servicio"]  = info["servicio_label"]
-        ctx["linea_medida"]    = (f"{m2_txt} m²" if m2_txt else "")
-        ctx["linea_total"]     = _fmt_money_clp(total_int)
+        ctx["linea_servicio"] = info["servicio_label"]
+        ctx["linea_medida"]  = m2_txt            # ← importante
+        ctx["descripcion"]   = f"{info['servicio_label']} — {m2_txt} m²" if m2_txt else info["servicio_label"]
 
     elif dom == "piscinas":
-        # m2 y m3 (estimado)
+        # Mostrar m² y m³ juntos en la misma celda
         m3_val = _volumen_estimado_m3(info)
+        if m3_val and float(m3_val).is_integer():
+            m3_txt = str(int(m3_val))
+        else:
+            m3_txt = str(m3_val) if m3_val else ""
+        # m2 (si viene)
         try:
             m2_val = float(info.get("m2") or 0)
-            m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val) if m2_val else ""
+            m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_txt = str(info.get("m2","")) if info.get("m2") else ""
-        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+            m2_txt = str(info.get("m2","")) or ""
 
         ctx["m2"] = m2_txt
         ctx["m3"] = m3_txt
-        ctx["descripcion"]     = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "") + (f" — {m3_txt} m³" if m3_txt else "")
-        ctx["linea_servicio"]  = info["servicio_label"]
-        # Columna unificada “MEDIDA”
-        if m2_txt and m3_txt:
-            ctx["linea_medida"] = f"{m2_txt} m² — {m3_txt} m³"
-        elif m2_txt:
-            ctx["linea_medida"] = f"{m2_txt} m²"
-        elif m3_txt:
-            ctx["linea_medida"] = f"{m3_txt} m³"
-        else:
-            ctx["linea_medida"] = ""
-        ctx["linea_total"]     = _fmt_money_clp(total_int)
+        ctx["linea_servicio"] = info["servicio_label"]
+        # “56 m² — 78.4 m³” o solo lo que haya
+        partes = []
+        if m2_txt: partes.append(f"{m2_txt} m²")
+        if m3_txt: partes.append(f"{m3_txt} m³")
+        ctx["linea_medida"]  = " — ".join(partes)
+        ctx["descripcion"]   = info["servicio_label"] + (f" — {ctx['linea_medida']}" if partes else "")
 
     elif dom == "camaras":
-        # tipo/área y cantidad
+        # Cantidad de cámaras como “x N”
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
-        ctx["camaras"]        = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
-        ctx["total"]          = _fmt_money_clp(tot)
-        ctx["precio"]         = _fmt_money_clp(tot)
-        ctx["descripcion"]    = f"{tipo} ({area}) x {qty}"
+        # Ajustar total si el cálculo específico difiere del genérico
+        ctx["total"]       = _fmt_money_clp(tot)
+        ctx["precio"]      = _fmt_money_clp(tot)
+        ctx["linea_total"] = _fmt_money_clp(tot)
+
         ctx["linea_servicio"] = f"Cámaras {tipo} ({area})"
-        ctx["linea_medida"]   = f"x {qty}"        # <--- la MEDIDA aquí es cantidad
-        ctx["linea_total"]    = _fmt_money_clp(qty * unit_ap)
+        ctx["linea_medida"]   = f"x {qty}"       # ← importante
+        ctx["descripcion"]    = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
 
     else:
-        # genérico
-        ctx["descripcion"]    = info["servicio_label"]
+        # Otros: deja la medida vacía y solo muestra el servicio
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"]   = ""                # si no aplica
-        ctx["linea_total"]    = _fmt_money_clp(total_int)
+        ctx["linea_medida"]   = ""
+        ctx["descripcion"]    = info["servicio_label"]
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
