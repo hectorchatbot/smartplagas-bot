@@ -226,6 +226,27 @@ def _canon_piscina_key(label: str) -> str:
     if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
     return ""
 
+# --- NUEVO: parser de tamaño "6x3" -> m² ---
+def _parse_m2_from_size(size_str: str) -> float:
+    s = (size_str or "").lower().replace("m2", "").replace("m²", "").replace("metros", "").strip()
+    s = s.replace(",", ".")
+    # 6x3, 6 x 3, 6*3, 6 × 3
+    m = re.search(r'(\d+(?:\.\d+)?)\s*[x×\*]\s*(\d+(?:\.\d+)?)', s)
+    if m:
+        try:
+            a = float(m.group(1)); b = float(m.group(2))
+            return round(a*b, 2)
+        except Exception:
+            pass
+    # solo un número (asumimos ya está en m²)
+    m2 = re.search(r'(\d+(?:\.\d+)?)', s)
+    if m2:
+        try:
+            return float(m2.group(1))
+        except Exception:
+            pass
+    return 0.0
+
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
     if not tabla: return 0
@@ -239,7 +260,7 @@ def _volumen_estimado_m3(info: dict) -> float:
     Estima el volumen en m³. Prioridad:
     1) m3 explícito (m3, volumen, volumen_m3)
     2) m2 * profundidad  (si no hay profundidad se usa POOL_DEFAULT_DEPTH)
-    3) 0.0 si no hay datos
+    3) Si m2=0 pero hay 'tamano_piscina' tipo '6x3', lo parsea y calcula m3.
     """
     # 1) explícito
     for k in ("m3","volumen","volumen_m3"):
@@ -248,9 +269,13 @@ def _volumen_estimado_m3(info: dict) -> float:
             try: return float(v.replace(",", "."))
             except Exception: pass
 
-    # 2) a partir de m2
-    try: m2 = float(info.get("m2") or 0)
-    except Exception: m2 = 0.0
+    # 2) a partir de m2 (o desde 'tamano_piscina')
+    try:
+        m2 = float(info.get("m2") or 0)
+    except Exception:
+        m2 = 0.0
+    if m2 <= 0:
+        m2 = _parse_m2_from_size(info.get("tamano_piscina"))
 
     # profundidad informada
     prof_raw = info.get("profundidad")
@@ -468,38 +493,42 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
-        # Estimar m³ de forma robusta (usa profundidad por defecto si no hay)
-        m3_val = _volumen_estimado_m3(info)
-        m3_txt = (str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else ""))
+        # calcular m2 robusto (desde 'm2' o 'tamano_piscina')
         try:
             m2_val = float(info.get("m2") or 0)
-            m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_txt = str(info.get("m2", "")) or ""
+            m2_val = 0.0
+        if m2_val <= 0:
+            m2_val = _parse_m2_from_size(info.get("tamano_piscina"))
 
-        # Volver a calcular total por si antes fue 0 y ahora sí hay m3
+        m3_val = _volumen_estimado_m3(info)
+
+        # recalcular total por si antes fue 0
         if total_int == 0:
             label = info.get("servicio_label", "")
             key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
             total_int = _precio_piscina_por_tramo(key, m3_val)
+
+        m2_txt = (str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)) if m2_val else "0"
+        m3_txt = (str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "0"))
+
         ctx["precio"] = _fmt_money_clp(total_int)
         ctx["total"]  = _fmt_money_clp(total_int)
         ctx["linea_total"] = _fmt_money_clp(total_int)
 
         ctx["m2"] = m2_txt
-        ctx["m3"] = m3_txt if m3_txt else str(_volumen_estimado_m3(info))
+        ctx["m3"] = m3_txt
 
         ctx["linea_servicio"] = info["servicio_label"]
-        partes = []
-        if m2_txt: partes.append(f"{m2_txt} m²")
-        # siempre intentamos mostrar m3; si no hay, mostramos cálculo con profundidad por defecto
-        if m3_val > 0:
-            partes.append(f"{m3_txt} m³")
-        elif m2_val:
-            partes.append(f"{int(m2_val)} m² × {POOL_DEFAULT_DEPTH} m ≈ {int(round(m2_val*POOL_DEFAULT_DEPTH))} m³")
-
-        ctx["linea_medida"] = " — ".join(partes) if partes else "1"
-        ctx["descripcion"] = info["servicio_label"] + (f" — {ctx['linea_medida']}" if partes else "")
+        # Siempre mostrar: "<m2> m² × <profundidad> m ≈ <m3> m³"
+        # profundidad efectiva
+        prof_raw = info.get("profundidad")
+        try:
+            prof_val = float(str(prof_raw).replace(",", ".")) if prof_raw not in (None,"") else POOL_DEFAULT_DEPTH
+        except Exception:
+            prof_val = POOL_DEFAULT_DEPTH
+        ctx["linea_medida"] = f"{m2_txt} m² × {prof_val} m ≈ {m3_txt} m³"
+        ctx["descripcion"] = f"{info['servicio_label']} — {ctx['linea_medida']}"
         ctx["clausula_seremi"] = ""
 
     elif dom == "camaras":
@@ -587,10 +616,14 @@ def normalize_payload(data: dict) -> dict:
     cantidad_camara = _safe(data.get("cantidad_camara"))
     area_vigilar    = _safe(data.get("area_vigilar"))
 
+    # m2 numérico si vino como número
     try:
         m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
+    # si no vino, intenta parsear "6x3" del tamaño
+    if m2_num <= 0 and tamano_piscina:
+        m2_num = _parse_m2_from_size(tamano_piscina)
 
     to_wa = ""
     fono = _safe(data.get("fono") or data.get("telefono") or data.get("phone"))
