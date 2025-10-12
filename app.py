@@ -17,6 +17,8 @@ APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", "dev-local")
 
 # Profundidad por defecto para piscinas (si el usuario no la entrega)
 POOL_DEFAULT_DEPTH = float(os.getenv("POOL_DEFAULT_DEPTH", "1.4"))
+# Volumen mínimo asumido en piscinas cuando no hay m2/m3
+PISCINA_MIN_M3_DEFAULT = float(os.getenv("PISCINA_MIN_M3_DEFAULT", "30"))
 
 # -----------------------------------------------------------------------------
 # App + CORS
@@ -79,10 +81,6 @@ def _sess_get(key: str):
 def _sess_set(key: str, val: dict, ttl_sec: int = 60*60*12):
     if not _r: return None
     _r.set(f"sess:{key}", json.dumps(val), ex=ttl_sec)
-
-def _sess_exists(key: str) -> bool:
-    if not _r: return False
-    return _r.exists(f"sess:{key}") == 1
 
 DEDUP_TTL = 300
 def _dedup_should_process(msg_sid: str) -> bool:
@@ -226,28 +224,27 @@ def _canon_piscina_key(label: str) -> str:
     if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
     return ""
 
-# --- NUEVO: parsea "6x3", "10 x 4.5", "8x4mts" -> m2 como float ---
+# --- Parseo "6x3", "10 x 4,5", "8x4mts" o solo "56" -> m2 ---
 def parse_pool_size_to_m2(size_text: str) -> float:
     if not size_text:
         return 0.0
     s = str(size_text).lower()
     s = s.replace("metros", "").replace("metro", "")
-    s = s.replace("m2", "").replace("m²", "").replace("mts", "").replace("mt", "")
-    s = s.strip()
-    s = s.replace("por", "x").replace("*", "x").replace(",", ".")
+    s = s.replace("m2", "").replace("m²", "").replace("mts", "").replace("mt", "").replace("m", "")
+    s = s.replace(",", ".").strip()
+    s = s.replace("por", "x").replace("*", "x")
     s = re.sub(r"\s+", "", s)
     m = re.match(r"^(\d+(?:\.\d+)?)[x×](\d+(?:\.\d+)?)$", s)
-    if not m:
-        # si viene solo un número, tómalo como m2
-        m2m = re.match(r"^(\d+(?:\.\d+)?)$", s)
-        if m2m:
-            return float(m2m.group(1))
-        return 0.0
-    try:
-        a = float(m.group(1)); b = float(m.group(2))
-        return round(a * b, 2)
-    except Exception:
-        return 0.0
+    if m:
+        try:
+            a = float(m.group(1)); b = float(m.group(2))
+            return round(a * b, 2)
+        except Exception:
+            return 0.0
+    m2m = re.match(r"^(\d+(?:\.\d+)?)$", s)
+    if m2m:
+        return float(m2m.group(1))
+    return 0.0
 
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
@@ -297,11 +294,13 @@ def precio_total(info: dict) -> int:
     if dominio == "piscinas":
         label = info.get("servicio_label", "")
         override = (info.get("servicio_precio") or "").strip()
-        if override in PRECIOS_PISCINA:
-            key = override
-        else:
-            key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
+        key = override if override in PRECIOS_PISCINA else (_canon_piscina_key(label) or "piscina_plan_intermedio_m3")
         m3 = _volumen_estimado_m3(info)
+        # Fallback: si no hay datos, asumir volumen mínimo
+        if m3 <= 0 and key.endswith("_m3"):
+            m3 = PISCINA_MIN_M3_DEFAULT
+            info["__m3_asumido__"] = True
+            info["__m3_asumido_val__"] = m3
         return _precio_piscina_por_tramo(key, m3)
     if dominio == "plagas":
         return precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
@@ -461,13 +460,13 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
-        # m² (puede venir desde 'm2' o haber sido inferido desde 'tamano_piscina')
+        # m²
         try:
             m2_val = float(info.get("m2") or 0)
         except Exception:
             m2_val = 0.0
 
-        # profundidad (si no viene, usa la por defecto)
+        # profundidad
         prof_raw = info.get("profundidad")
         prof_val = None
         if prof_raw not in (None, ""):
@@ -476,34 +475,43 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
             except Exception:
                 prof_val = None
 
-        # volumen m³ robusto
-        m3_val = _volumen_estimado_m3(info)  # usa m2*prof (o default) si no hay m3 explícito
-        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+        # m³ (con fallback si es necesario)
+        m3_val = _volumen_estimado_m3(info)
+        m3_asumido = False
+        if m3_val <= 0:
+            m3_asumido = True
+            m3_val = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
 
-        # recalcular total con el key correcto siempre según m³
+        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+        m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
+
+        # clave y total
         label = info.get("servicio_label", "")
         key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
         total_int = _precio_piscina_por_tramo(key, m3_val)
 
-        # textos auxiliares m2/m3
-        m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
-
-        ctx["m2"] = m2_txt
-        ctx["m3"] = m3_txt
+        # rellenar campos monetarios
         ctx["precio"] = _fmt_money_clp(total_int)
         ctx["total"]  = _fmt_money_clp(total_int)
         ctx["linea_total"] = _fmt_money_clp(total_int)
 
-        # CANTIDAD: prioriza m³; si no hay m³, muestra m² × profundidad (aprox m³)
-        if m3_val > 0:
+        ctx["m2"] = m2_txt
+        ctx["m3"] = m3_txt
+
+        # cantidad (linea_medida) + descripción
+        if m3_val > 0 and not m3_asumido:
             ctx["linea_medida"] = f"{m3_txt} m³"
             ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³"
+        elif m3_val > 0 and m3_asumido:
+            ctx["linea_medida"] = f"{m3_txt} m³ (asumido)"
+            ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³ (asumido)"
         elif m2_val > 0:
             depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
             aprox_m3 = int(round(m2_val * depth))
             ctx["linea_medida"] = f"{int(m2_val)} m² × {depth} m ≈ {aprox_m3} m³"
             ctx["descripcion"]  = f"{info['servicio_label']} — {ctx['linea_medida']}"
         else:
+            # último fallback (no debería ocurrir ya con el asumido)
             ctx["linea_medida"] = "1"
             ctx["descripcion"]  = info["servicio_label"]
 
@@ -601,7 +609,7 @@ def normalize_payload(data: dict) -> dict:
     except Exception:
         m2_num = 0.0
 
-    # NUEVO: si m2 no viene, lo obtenemos del tamaño "LxA"
+    # si m2 no viene, intentar desde "LxA"
     if (not m2_num) and tamano_piscina:
         calc_m2 = parse_pool_size_to_m2(tamano_piscina)
         if calc_m2 > 0:
@@ -703,8 +711,11 @@ def handle_generate():
     medidas_line = ""; detalle_line = ""
     if dominio == "piscinas":
         vol = _volumen_estimado_m3(info)
-        base_m2 = info.get('m2',0)
-        medidas_line = f"*Superficie:* {base_m2} m²" + (f" | *Volumen:* {vol} m³" if vol > 0 else f" | *Profundidad por defecto:* {POOL_DEFAULT_DEPTH} m") + "\n"
+        if vol <= 0:
+            vol = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
+            medidas_line = f"*Volumen (asumido):* {vol} m³\n"
+        else:
+            medidas_line = f"*Volumen:* {vol} m³\n"
     elif dominio == "plagas":
         medidas_line = f"*Superficie tratada:* {info.get('m2',0)} m²\n"
     elif dominio == "camaras":
@@ -738,7 +749,7 @@ def handle_generate():
     dbg = {
         "dominio": dominio,
         "precio_key_piscina": (info.get("servicio_precio") if info.get("servicio_precio") in PRECIOS_PISCINA else _canon_piscina_key(info.get("servicio_label",""))),
-        "m3_calc": _volumen_estimado_m3(info),
+        "m3_calc": _volumen_estimado_m3(info) or info.get("__m3_asumido_val__"),
         "tpl_used": tpl_used
     }
 
