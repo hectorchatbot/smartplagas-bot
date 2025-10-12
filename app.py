@@ -226,6 +226,29 @@ def _canon_piscina_key(label: str) -> str:
     if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
     return ""
 
+# --- NUEVO: parsea "6x3", "10 x 4.5", "8x4mts" -> m2 como float ---
+def parse_pool_size_to_m2(size_text: str) -> float:
+    if not size_text:
+        return 0.0
+    s = str(size_text).lower()
+    s = s.replace("metros", "").replace("metro", "")
+    s = s.replace("m2", "").replace("m²", "").replace("mts", "").replace("mt", "")
+    s = s.strip()
+    s = s.replace("por", "x").replace("*", "x").replace(",", ".")
+    s = re.sub(r"\s+", "", s)
+    m = re.match(r"^(\d+(?:\.\d+)?)[x×](\d+(?:\.\d+)?)$", s)
+    if not m:
+        # si viene solo un número, tómalo como m2
+        m2m = re.match(r"^(\d+(?:\.\d+)?)$", s)
+        if m2m:
+            return float(m2m.group(1))
+        return 0.0
+    try:
+        a = float(m.group(1)); b = float(m.group(2))
+        return round(a * b, 2)
+    except Exception:
+        return 0.0
+
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
     if not tabla: return 0
@@ -234,50 +257,16 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
         if lo <= m2n <= hi: return int(tabla[idx])
     return int(tabla[-1])
 
-# --- NUEVO: parser de "tamano_piscina" a m² (ej. "5x5", "4,5 x 3,2") ---
-def _parse_area_m2_from_size(txt: str) -> float:
-    if not txt: 
-        return 0.0
-    t = txt.lower().strip()
-    # reemplaza coma por punto
-    t = t.replace(",", ".")
-    # casos: "5x5", "5 x 5", "5 * 5"
-    m = re.findall(r"(\d+(?:\.\d+)?)\s*[x\*]\s*(\d+(?:\.\d+)?)", t)
-    if m:
-        try:
-            a, b = float(m[0][0]), float(m[0][1])
-            if a > 0 and b > 0:
-                return round(a * b, 1)
-        except Exception:
-            pass
-    # Si el usuario escribió directamente el área "25" asumimos m²
-    try:
-        v = float(t)
-        if v > 0:
-            return round(v, 1)
-    except Exception:
-        pass
-    return 0.0
-
 def _volumen_estimado_m3(info: dict) -> float:
-    """
-    Estima el volumen en m³. Prioridad:
-    1) m3 explícito (m3, volumen, volumen_m3)
-    2) m2 * profundidad  (si no hay profundidad se usa POOL_DEFAULT_DEPTH)
-    3) 0.0 si no hay datos
-    """
     # 1) explícito
     for k in ("m3","volumen","volumen_m3"):
         v = str(info.get(k, "") or "").strip()
         if v:
             try: return float(v.replace(",", "."))
             except Exception: pass
-
-    # 2) a partir de m2
+    # 2) m2 * profundidad (si no hay profundidad, usa default)
     try: m2 = float(info.get("m2") or 0)
     except Exception: m2 = 0.0
-
-    # profundidad informada
     prof_raw = info.get("profundidad")
     prof_val = None
     if prof_raw not in (None, ""):
@@ -285,11 +274,9 @@ def _volumen_estimado_m3(info: dict) -> float:
             prof_val = float(str(prof_raw).replace(",", "."))
         except Exception:
             prof_val = None
-
     if m2 > 0:
         depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
         return round(m2 * depth, 1)
-
     return 0.0
 
 def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
@@ -307,7 +294,6 @@ def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
 
 def precio_total(info: dict) -> int:
     dominio = _dominio_servicio(info.get("servicio_label",""))
-
     if dominio == "piscinas":
         label = info.get("servicio_label", "")
         override = (info.get("servicio_precio") or "").strip()
@@ -317,16 +303,13 @@ def precio_total(info: dict) -> int:
             key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
         m3 = _volumen_estimado_m3(info)
         return _precio_piscina_por_tramo(key, m3)
-
     if dominio == "plagas":
         return precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
-
     if dominio == "camaras":
         total, _, _, _, _ = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
         return total
-
     return 0
 
 def _safe(x):
@@ -404,66 +387,37 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
 # -----------------------------------------------------------------------------
-# Selección de plantilla + Render DOCX (SIN BUCLES)
+# Selección de plantilla + Render DOCX
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
-    """
-    Busca una plantilla adecuada según el dominio del servicio.
-    Damos prioridad explícita a 'Plantilla_Cotizacion.docx' si existe.
-    """
-    # 0) Prioridad absoluta a Plantilla_Cotizacion.docx
-    prefer_exact = ["Plantilla_Cotizacion.docx", "plantilla_cotizacion.docx"]
-    for d in TEMPLATE_DIRS:
-        if not d: 
-            continue
-        for name in prefer_exact:
-            p = os.path.join(d, name)
-            if os.path.isfile(p):
-                app.logger.info(f"[TPL] Usando plantilla prioritara: {p}")
-                return p
-
     dom = _dominio_servicio(info.get("servicio_label","")) or "otro"
-
-    # candidatos por dominio (nuevos primero, luego antiguos)
     por_dom = {
         "plagas":   ["cotizacion_plagas.docx",   "templatescotizacion_plagas.docx"],
         "piscinas": ["cotizacion_piscinas.docx", "templatescotizacion_piscinas.docx"],
         "camaras":  ["cotizacion_camaras.docx",  "templatescotizacion_camaras.docx"],
     }
     prefer = por_dom.get(dom, []) + [
-        "cotizacion_template.docx", "templatescotizacion_template.docx"
+        "cotizacion_template.docx", "templatescotizacion_template.docx",
+        "Plantilla_Cotizacion.docx"
     ]
-
-    # 1) preferidos exactos por dominio
     for d in TEMPLATE_DIRS:
-        if not d:
-            continue
+        if not d: continue
         for name in prefer:
             p = os.path.join(d, name)
             if os.path.isfile(p):
                 app.logger.info(f"[TPL] Usando plantilla preferida: {p}")
                 return p
-
-    # 2) cualquier archivo que contenga 'template' o 'plantilla' en su nombre
     for d in TEMPLATE_DIRS:
         if d and os.path.isdir(d):
             for fname in os.listdir(d):
-                lo = fname.lower()
-                if lo.endswith(".docx") and ("template" in lo or "plantilla" in lo):
-                    p = os.path.join(d, fname)
-                    app.logger.info(f"[TPL] Usando plantilla genérica: {p}")
-                    return p
-
-    # 3) cualquier .docx existente
+                if fname.lower().endswith(".docx") and "template" in fname.lower():
+                    return os.path.join(d, fname)
     for d in TEMPLATE_DIRS:
         if d and os.path.isdir(d):
             for fname in os.listdir(d):
                 if fname.lower().endswith(".docx"):
-                    p = os.path.join(d, fname)
-                    app.logger.info(f"[TPL] Usando cualquier DOCX encontrado: {p}")
-                    return p
-
-    raise FileNotFoundError("No se encontraron plantillas DOCX en /templates ni en /out")
+                    return os.path.join(d, fname)
+    raise FileNotFoundError("No se encontraron plantillas DOCX")
 
 def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     tpl_path = _select_template_path(info)
@@ -472,21 +426,9 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
 
     dom = _dominio_servicio(info.get("servicio_label", ""))
 
-    # ---- Normalizaciones extra para piscinas ----
-    if dom == "piscinas":
-        # Si m2 viene 0 y existe tamano_piscina, lo calculamos
-        try:
-            m2_val = float(info.get("m2") or 0)
-        except Exception:
-            m2_val = 0.0
-        if m2_val <= 0 and info.get("tamano_piscina"):
-            m2_calc = _parse_area_m2_from_size(info.get("tamano_piscina"))
-            if m2_calc > 0:
-                info["m2"] = m2_calc
-
+    # Calcula total inicial (se puede recalcular para piscinas más abajo)
     total_int = precio_total(info)
 
-    # Contexto base + sinónimos para compatibilidad con distintas plantillas
     ctx = {
         "fecha": info["fecha"],
         "cliente": info["cliente"],
@@ -495,26 +437,14 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         "contacto": info["contacto"],
         "email": info["email"],
         "servicio": info["servicio_label"],
-
         "descripcion": "",
         "linea_servicio": "",
         "linea_medida": "",
         "linea_total": _fmt_money_clp(total_int),
-
-        # Totales (múltiples alias)
         "total": _fmt_money_clp(total_int),
         "precio": _fmt_money_clp(total_int),
-        "total_servicio": _fmt_money_clp(total_int),
-        "subtotal": _fmt_money_clp(total_int),
-        "precio_total": _fmt_money_clp(total_int),
-
-        # Cantidades (múltiples alias)
-        "cantidad": "",
-        "cantidad_txt": "",
-        "qty": "",
         "m2": "",
         "m3": "",
-
         "clausula_seremi": "",
     }
 
@@ -526,66 +456,76 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
             m2_txt = str(info.get("m2", "")) or ""
         ctx["m2"] = m2_txt
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"]  = m2_txt if m2_txt else "1"
-        ctx["cantidad"] = ctx["cantidad_txt"] = ctx["qty"] = ctx["linea_medida"]
+        ctx["linea_medida"] = m2_txt if m2_txt else "1"
         ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
-        m3_val = _volumen_estimado_m3(info)
-        m3_txt = (str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else ""))
-
+        # m² (puede venir desde 'm2' o haber sido inferido desde 'tamano_piscina')
         try:
             m2_val = float(info.get("m2") or 0)
         except Exception:
             m2_val = 0.0
+
+        # profundidad (si no viene, usa la por defecto)
+        prof_raw = info.get("profundidad")
+        prof_val = None
+        if prof_raw not in (None, ""):
+            try:
+                prof_val = float(str(prof_raw).replace(",", "."))
+            except Exception:
+                prof_val = None
+
+        # volumen m³ robusto
+        m3_val = _volumen_estimado_m3(info)  # usa m2*prof (o default) si no hay m3 explícito
+        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+
+        # recalcular total con el key correcto siempre según m³
+        label = info.get("servicio_label", "")
+        key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
+        total_int = _precio_piscina_por_tramo(key, m3_val)
+
+        # textos auxiliares m2/m3
         m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
 
-        # Forzar total por si antes fue 0 y ahora sí hay m3
-        if total_int == 0:
-            label = info.get("servicio_label", "")
-            key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
-            total_int = _precio_piscina_por_tramo(key, m3_val)
-            for k in ("linea_total", "total", "precio", "total_servicio", "subtotal", "precio_total"):
-                ctx[k] = _fmt_money_clp(total_int)
-
         ctx["m2"] = m2_txt
-        ctx["m3"] = m3_txt if m3_txt else str(_volumen_estimado_m3(info))
+        ctx["m3"] = m3_txt
+        ctx["precio"] = _fmt_money_clp(total_int)
+        ctx["total"]  = _fmt_money_clp(total_int)
+        ctx["linea_total"] = _fmt_money_clp(total_int)
+
+        # CANTIDAD: prioriza m³; si no hay m³, muestra m² × profundidad (aprox m³)
+        if m3_val > 0:
+            ctx["linea_medida"] = f"{m3_txt} m³"
+            ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³"
+        elif m2_val > 0:
+            depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
+            aprox_m3 = int(round(m2_val * depth))
+            ctx["linea_medida"] = f"{int(m2_val)} m² × {depth} m ≈ {aprox_m3} m³"
+            ctx["descripcion"]  = f"{info['servicio_label']} — {ctx['linea_medida']}"
+        else:
+            ctx["linea_medida"] = "1"
+            ctx["descripcion"]  = info["servicio_label"]
 
         ctx["linea_servicio"] = info["servicio_label"]
-
-        # Mostrar cantidad clara bajo la columna de cantidad
-        cantidad_txt = ""
-        if m3_val > 0:
-            cantidad_txt = f"{m3_txt} m³"
-        elif m2_val > 0:
-            cantidad_txt = f"{int(round(m2_val*POOL_DEFAULT_DEPTH))} m³ (≈ {m2_txt} m² × {POOL_DEFAULT_DEPTH} m)"
-
-        ctx["linea_medida"] = cantidad_txt if cantidad_txt else "1"
-        ctx["cantidad"] = ctx["cantidad_txt"] = ctx["qty"] = ctx["linea_medida"]
-
-        # Descripción detallada
-        partes = []
-        if m2_txt: partes.append(f"{m2_txt} m²")
-        if m3_val > 0: partes.append(f"{m3_txt} m³")
-        ctx["descripcion"] = info["servicio_label"] + (f" — {' — '.join(partes)}" if partes else "")
+        ctx["clausula_seremi"] = ""
 
     elif dom == "camaras":
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara", ""), info.get("area_vigilar", ""), info.get("cantidad_camara", "")
         )
-        for k in ("linea_total", "total", "precio", "total_servicio", "subtotal", "precio_total"):
-            ctx[k] = _fmt_money_clp(tot)
+        ctx["total"] = _fmt_money_clp(tot)
+        ctx["precio"] = _fmt_money_clp(tot)
+        ctx["linea_total"] = _fmt_money_clp(tot)
         ctx["linea_servicio"] = f"Cámaras {tipo} ({area})"
-        ctx["linea_medida"]  = f"x {qty}"
-        ctx["cantidad"] = ctx["cantidad_txt"] = ctx["qty"] = ctx["linea_medida"]
+        ctx["linea_medida"] = f"x {qty}"
         ctx["descripcion"] = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
-
+        ctx["clausula_seremi"] = ""
     else:
         ctx["linea_servicio"] = info["servicio_label"]
         ctx["linea_medida"] = "1"
-        ctx["cantidad"] = ctx["cantidad_txt"] = ctx["qty"] = "1"
         ctx["descripcion"] = info["servicio_label"]
+        ctx["clausula_seremi"] = ""
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
@@ -650,23 +590,24 @@ def normalize_payload(data: dict) -> dict:
     tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaño_piscina"))
     m3_explicit    = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
 
-    # --- campos de cámaras ---
+    # cámaras:
     tipo_camara     = _safe(data.get("tipo_camara"))
     cantidad_camara = _safe(data.get("cantidad_camara"))
     area_vigilar    = _safe(data.get("area_vigilar"))
 
-    # m2 numérico directo
+    # m2 declarado
     try:
         m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
 
-    # Si no vino m2 y tenemos tamano_piscina (ej. "5x5"), lo convertimos a m²
+    # NUEVO: si m2 no viene, lo obtenemos del tamaño "LxA"
     if (not m2_num) and tamano_piscina:
-        area = _parse_area_m2_from_size(tamano_piscina)
-        if area > 0:
-            m2_num = area
+        calc_m2 = parse_pool_size_to_m2(tamano_piscina)
+        if calc_m2 > 0:
+            m2_num = calc_m2
 
+    # to whatsapp
     to_wa = ""
     fono = _safe(data.get("fono") or data.get("telefono") or data.get("phone"))
     if fono:
@@ -763,10 +704,7 @@ def handle_generate():
     if dominio == "piscinas":
         vol = _volumen_estimado_m3(info)
         base_m2 = info.get('m2',0)
-        if vol > 0:
-            medidas_line = f"*Superficie:* {base_m2} m² | *Volumen:* {vol} m³\n"
-        else:
-            medidas_line = f"*Superficie:* {base_m2} m² | *Profundidad por defecto:* {POOL_DEFAULT_DEPTH} m\n"
+        medidas_line = f"*Superficie:* {base_m2} m²" + (f" | *Volumen:* {vol} m³" if vol > 0 else f" | *Profundidad por defecto:* {POOL_DEFAULT_DEPTH} m") + "\n"
     elif dominio == "plagas":
         medidas_line = f"*Superficie tratada:* {info.get('m2',0)} m²\n"
     elif dominio == "camaras":
@@ -999,69 +937,50 @@ def _send_menu(resp, node):
 def _try_pick_option(node, user_text):
     opts = node.get("options", []) or []
     txt = (user_text or "").strip().lower()
-
     m = re.match(r"^\s*(\d+)\s*$", txt)
     if m:
         idx = int(m.group(1)) - 1
         if 0 <= idx < len(opts):
             return opts[idx]
-
     def norm(s):
         s = s or ""
         s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
         return re.sub(r"\s+", " ", s).strip().lower()
-
     txtn = norm(txt)
     for o in opts:
         if norm(o.get("text", "")) == txtn:
             return o
-
     return None
 
 def _flow_emit_until_input(resp, sess):
     current = sess.get("node_id") or _flow_start_id()
     vars_ = sess.get("vars", {})
-
     visited = set()
     while current and current in _FLOW and current not in visited:
         visited.add(current)
         node = _FLOW[current]
         ntype = node.get("type")
-
         if ntype == "mensaje":
             txt = _fmt_vars(node.get("content", ""), vars_)
-            if txt:
-                resp.message(txt)
-            current = node.get("nextId")
-            continue
-
+            if txt: resp.message(txt)
+            current = node.get("nextId"); continue
         elif ntype == "pregunta":
             txt = _fmt_vars(node.get("content", ""), vars_)
-            if txt:
-                resp.message(txt)
-            sess["node_id"] = node["id"]
-            return
-
+            if txt: resp.message(txt)
+            sess["node_id"] = node["id"]; return
         elif ntype == "condicional":
             _send_menu(resp, node)
-            sess["node_id"] = node["id"]
-            return
-
+            sess["node_id"] = node["id"]; return
         else:
             current = node.get("nextId")
-
     sess["node_id"] = None
 
 def _map_rango_m2_to_number(rango: str) -> int:
-    if not rango:
-        return 0
+    if not rango: return 0
     s = rango.lower()
-    if "menos" in s or "<" in s or "100" in s and "200" not in s:
-        return 90
-    if "100" in s and "200" in s:
-        return 150
-    if "200" in s or "más" in s or "mas" in s or ">" in s:
-        return 250
+    if "menos" in s or "<" in s or ("100" in s and "200" not in s): return 90
+    if "100" in s and "200" in s: return 150
+    if "200" in s or "más" in s or "mas" in s or ">" in s: return 250
     return 0
 
 def _compose_payload_from_vars(vars_, from_wa: str):
@@ -1072,7 +991,6 @@ def _compose_payload_from_vars(vars_, from_wa: str):
     email = vars_.get("email", "")
     telefono = vars_.get("telefono", "")
     nombre = vars_.get("nombre", "")
-
     m2 = _map_rango_m2_to_number(vars_.get("rango_m2", ""))
 
     tamano_piscina = vars_.get("tamano_piscina", "")
@@ -1158,7 +1076,6 @@ def _flow_finish_and_generate(resp, form, sess):
     _sess_set(_sess_key(form), sess)
 
 # =========================[ WEBHOOK con flujo ]=========================
-
 @app.route("/webhook", methods=["GET", "POST", "HEAD"])
 def webhook():
     if request.method != "POST":
@@ -1238,8 +1155,10 @@ def reload_flow():
         return jsonify(ok=False, error=str(e)), 500
 
 def _log_url_map():
-    try: logging.info("URL MAP:\n%s", app.url_map)
-    except Exception: pass
+    try:
+        logging.info("URL MAP:\n%s", app.url_map)
+    except Exception:
+        pass
 
 _log_url_map()
 
