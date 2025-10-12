@@ -259,19 +259,27 @@ def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
 
 def precio_total(info: dict) -> int:
     dominio = _dominio_servicio(info.get("servicio_label",""))
+
     if dominio == "piscinas":
-        key = (info.get("servicio_precio") or "").strip() \
-              or _canon_piscina_key(info.get("servicio_label","")) \
-              or "piscina_plan_intermedio_m3"
+        label = info.get("servicio_label", "")
+        override = (info.get("servicio_precio") or "").strip()
+        # Usa el override solo si es una clave válida de PRECIOS_PISCINA
+        if override in PRECIOS_PISCINA:
+            key = override
+        else:
+            key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
         m3 = _volumen_estimado_m3(info)
         return _precio_piscina_por_tramo(key, m3)
+
     if dominio == "plagas":
         return precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
+
     if dominio == "camaras":
         total, _, _, _, _ = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
         return total
+
     return 0
 
 def _safe(x):
@@ -372,7 +380,7 @@ def _select_template_path(info: dict) -> str:
 
     dirs_a_buscar = [
         os.path.join(BASE_DIR, "templates"),
-        FILES_DIR,  # <--- NUEVO: también mira en /out por si subiste por /upload
+        FILES_DIR,  # también mira en /out por si subiste por /upload
     ]
 
     # 1) por nombres preferidos
@@ -404,7 +412,7 @@ def _select_template_path(info: dict) -> str:
     raise FileNotFoundError("No se encontraron plantillas DOCX en /templates ni en /out")
 
 
-def generar_docx_desde_plantilla(path: str, info: dict)->None:
+def generar_docx_desde_plantilla(path: str, info: dict)->str:
     tpl_path = _select_template_path(info)
     if not os.path.exists(tpl_path):
         raise FileNotFoundError(f"Plantilla no encontrada: {tpl_path}")
@@ -426,14 +434,14 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
 
         # FILA DE LA TABLA (3 columnas)
         "linea_servicio": "",
-        "linea_medida": "",   # <- esta es la que usa tu plantilla
+        "linea_medida": "",   # campo genérico (u / m² / m³)
         "linea_total": _fmt_money_clp(total_int),
 
         # Totales al pie
         "total": _fmt_money_clp(total_int),
         "precio": _fmt_money_clp(total_int),
 
-        # Por compatibilidad con plantillas antiguas
+        # Compatibilidad con plantillas antiguas
         "m2": "",
         "m3": "",
     }
@@ -447,7 +455,7 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
             m2_txt = str(info.get("m2","")) or ""
         ctx["m2"] = m2_txt
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"]  = m2_txt            # ← importante
+        ctx["linea_medida"]  = m2_txt
         ctx["descripcion"]   = f"{info['servicio_label']} — {m2_txt} m²" if m2_txt else info["servicio_label"]
 
     elif dom == "piscinas":
@@ -457,7 +465,6 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
             m3_txt = str(int(m3_val))
         else:
             m3_txt = str(m3_val) if m3_val else ""
-        # m2 (si viene)
         try:
             m2_val = float(info.get("m2") or 0)
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
@@ -467,7 +474,6 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
         ctx["m2"] = m2_txt
         ctx["m3"] = m3_txt
         ctx["linea_servicio"] = info["servicio_label"]
-        # “56 m² — 78.4 m³” o solo lo que haya
         partes = []
         if m2_txt: partes.append(f"{m2_txt} m²")
         if m3_txt: partes.append(f"{m3_txt} m³")
@@ -475,21 +481,18 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
         ctx["descripcion"]   = info["servicio_label"] + (f" — {ctx['linea_medida']}" if partes else "")
 
     elif dom == "camaras":
-        # Cantidad de cámaras como “x N”
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
-        # Ajustar total si el cálculo específico difiere del genérico
         ctx["total"]       = _fmt_money_clp(tot)
         ctx["precio"]      = _fmt_money_clp(tot)
         ctx["linea_total"] = _fmt_money_clp(tot)
 
         ctx["linea_servicio"] = f"Cámaras {tipo} ({area})"
-        ctx["linea_medida"]   = f"x {qty}"       # ← importante
+        ctx["linea_medida"]   = f"x {qty}"
         ctx["descripcion"]    = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
 
     else:
-        # Otros: deja la medida vacía y solo muestra el servicio
         ctx["linea_servicio"] = info["servicio_label"]
         ctx["linea_medida"]   = ""
         ctx["descripcion"]    = info["servicio_label"]
@@ -497,6 +500,8 @@ def generar_docx_desde_plantilla(path: str, info: dict)->None:
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
     tpl.save(path)
+
+    return tpl_path  # ← devolvemos plantilla usada
 
 # -----------------------------------------------------------------------------
 # WhatsApp helpers
@@ -692,8 +697,15 @@ def handle_generate():
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
+    dbg = {
+        "dominio": dominio,
+        "precio_key_piscina": (info.get("servicio_precio") if info.get("servicio_precio") in PRECIOS_PISCINA else _canon_piscina_key(info.get("servicio_label",""))),
+        "m3_calc": _volumen_estimado_m3(info),
+        "tpl_used": tpl_used
+    }
+
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
-                   to_wa=info.get("to_whatsapp",""), twilio=sids, debug={"tpl_used": tpl_used}), 200
+                   to_wa=info.get("to_whatsapp",""), twilio=sids, dbg=dbg), 200
 
 # -----------------------------------------------------------------------------
 # Rutas básicas
