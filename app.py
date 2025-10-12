@@ -15,6 +15,9 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv(override=False)
 APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", "dev-local")
 
+# Profundidad por defecto para piscinas (si el usuario no la entrega)
+POOL_DEFAULT_DEPTH = float(os.getenv("POOL_DEFAULT_DEPTH", "1.4"))
+
 # -----------------------------------------------------------------------------
 # App + CORS
 # -----------------------------------------------------------------------------
@@ -232,19 +235,36 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     return int(tabla[-1])
 
 def _volumen_estimado_m3(info: dict) -> float:
+    """
+    Estima el volumen en m³. Prioridad:
+    1) m3 explícito (m3, volumen, volumen_m3)
+    2) m2 * profundidad  (si no hay profundidad se usa POOL_DEFAULT_DEPTH)
+    3) 0.0 si no hay datos
+    """
+    # 1) explícito
     for k in ("m3","volumen","volumen_m3"):
         v = str(info.get(k, "") or "").strip()
         if v:
             try: return float(v.replace(",", "."))
             except Exception: pass
+
+    # 2) a partir de m2
     try: m2 = float(info.get("m2") or 0)
     except Exception: m2 = 0.0
-    try:
-        prof = float(str(info.get("profundidad") or "").replace(",", ".")) if info.get("profundidad") else None
-    except Exception:
-        prof = None
-    if m2 > 0 and prof is not None and prof > 0:
-        return round(m2 * prof, 1)
+
+    # profundidad informada
+    prof_raw = info.get("profundidad")
+    prof_val = None
+    if prof_raw not in (None, ""):
+        try:
+            prof_val = float(str(prof_raw).replace(",", "."))
+        except Exception:
+            prof_val = None
+
+    if m2 > 0:
+        depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
+        return round(m2 * depth, 1)
+
     return 0.0
 
 def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
@@ -380,7 +400,7 @@ def _select_template_path(info: dict) -> str:
 
     # 1) preferidos exactos
     for d in TEMPLATE_DIRS:
-        if not d: 
+        if not d:
             continue
         for name in prefer:
             p = os.path.join(d, name)
@@ -443,11 +463,12 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
             m2_txt = str(info.get("m2", "")) or ""
         ctx["m2"] = m2_txt
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"] = m2_txt
+        ctx["linea_medida"] = m2_txt if m2_txt else "1"
         ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
+        # Estimar m³ de forma robusta (usa profundidad por defecto si no hay)
         m3_val = _volumen_estimado_m3(info)
         m3_txt = (str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else ""))
         try:
@@ -455,13 +476,29 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
             m2_txt = str(info.get("m2", "")) or ""
+
+        # Volver a calcular total por si antes fue 0 y ahora sí hay m3
+        if total_int == 0:
+            label = info.get("servicio_label", "")
+            key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
+            total_int = _precio_piscina_por_tramo(key, m3_val)
+        ctx["precio"] = _fmt_money_clp(total_int)
+        ctx["total"]  = _fmt_money_clp(total_int)
+        ctx["linea_total"] = _fmt_money_clp(total_int)
+
         ctx["m2"] = m2_txt
-        ctx["m3"] = m3_txt
+        ctx["m3"] = m3_txt if m3_txt else str(_volumen_estimado_m3(info))
+
         ctx["linea_servicio"] = info["servicio_label"]
         partes = []
         if m2_txt: partes.append(f"{m2_txt} m²")
-        if m3_txt: partes.append(f"{m3_txt} m³")
-        ctx["linea_medida"] = " — ".join(partes)
+        # siempre intentamos mostrar m3; si no hay, mostramos cálculo con profundidad por defecto
+        if m3_val > 0:
+            partes.append(f"{m3_txt} m³")
+        elif m2_val:
+            partes.append(f"{int(m2_val)} m² × {POOL_DEFAULT_DEPTH} m ≈ {int(round(m2_val*POOL_DEFAULT_DEPTH))} m³")
+
+        ctx["linea_medida"] = " — ".join(partes) if partes else "1"
         ctx["descripcion"] = info["servicio_label"] + (f" — {ctx['linea_medida']}" if partes else "")
         ctx["clausula_seremi"] = ""
 
@@ -478,7 +515,7 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         ctx["clausula_seremi"] = ""
     else:
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"] = ""
+        ctx["linea_medida"] = "1"
         ctx["descripcion"] = info["servicio_label"]
         ctx["clausula_seremi"] = ""
 
@@ -545,7 +582,7 @@ def normalize_payload(data: dict) -> dict:
     tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaño_piscina"))
     m3_explicit    = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
 
-    # --- campos de cámaras (ahora los pasamos a info para REST y flujo) ---
+    # --- campos de cámaras ---
     tipo_camara     = _safe(data.get("tipo_camara"))
     cantidad_camara = _safe(data.get("cantidad_camara"))
     area_vigilar    = _safe(data.get("area_vigilar"))
@@ -651,7 +688,7 @@ def handle_generate():
     if dominio == "piscinas":
         vol = _volumen_estimado_m3(info)
         base_m2 = info.get('m2',0)
-        medidas_line = f"*Superficie:* {base_m2} m²" + (f" | *Volumen:* {vol} m³" if vol > 0 else "") + "\n"
+        medidas_line = f"*Superficie:* {base_m2} m²" + (f" | *Volumen:* {vol} m³" if vol > 0 else f" | *Profundidad por defecto:* {POOL_DEFAULT_DEPTH} m") + "\n"
     elif dominio == "plagas":
         medidas_line = f"*Superficie tratada:* {info.get('m2',0)} m²\n"
     elif dominio == "camaras":
