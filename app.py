@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -9,7 +9,7 @@ from werkzeug.utils import secure_filename
 import redis
 
 # -----------------------------------------------------------------------------
-# Config básica / logging
+# Config bÃ¡sica / logging
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 load_dotenv(override=False)
@@ -154,7 +154,7 @@ def _descuento_por_cantidad(qty: int) -> float:
 def _infer_area_from_text(txt: str, tipo_camara: str) -> str:
     if (tipo_camara or "").lower().startswith("sola"): return "exterior"
     t = (txt or "").lower()
-    exterior_words = ("exterior","patio","jardin","jardín","porton","portón","entrada","estacionamiento","perimetro","perímetro","terraza","muro")
+    exterior_words = ("exterior","patio","jardin","jardÃ­n","porton","portÃ³n","entrada","estacionamiento","perimetro","perÃ­metro","terraza","muro")
     return "exterior" if any(w in t for w in exterior_words) else "interior"
 
 def _canon_tipo_camara(s: str) -> str:
@@ -168,7 +168,7 @@ def _cantidad_aproximada(opcion: str) -> int:
     t = (opcion or "").lower()
     if "1" in t and "2" in t: return 2
     if "3" in t and "5" in t: return 4
-    if "mas" in t or "más" in t or "5" in t: return 6
+    if "mas" in t or "mÃ¡s" in t or "5" in t: return 6
     m = re.search(r"\d+", t)
     return int(m.group(0)) if m else 1
 
@@ -216,7 +216,7 @@ def _canon_piscina_key(label: str) -> str:
     if ("shock" in s) or ("clor" in s):                                   return "piscina_shock_m3"
     if ("diagn" in s):                                                    return "piscina_diagnostico_total"
     if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
-    return ""  # fallback se resuelve más abajo
+    return ""  # fallback se resuelve mÃ¡s abajo
 
 def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     tabla = PRECIOS.get(servicio_precio)
@@ -227,7 +227,7 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     return int(tabla[-1])
 
 def _volumen_estimado_m3(info: dict) -> float:
-    # 1) m3 explícito
+    # 1) m3 explÃ­cito
     for k in ("m3","volumen","volumen_m3"):
         v = str(info.get(k, "") or "").strip()
         if v:
@@ -263,7 +263,7 @@ def precio_total(info: dict) -> int:
     if dominio == "piscinas":
         label = info.get("servicio_label", "")
         override = (info.get("servicio_precio") or "").strip()
-        # Usa el override solo si es una clave válida de PRECIOS_PISCINA
+        # Usa el override solo si es una clave vÃ¡lida de PRECIOS_PISCINA
         if override in PRECIOS_PISCINA:
             key = override
         else:
@@ -330,7 +330,7 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
     outdir = os.path.dirname(pdf_path)
     bin_lo = _lo_bin()
     if not bin_lo:
-        raise RuntimeError("LibreOffice no está disponible en el contenedor.")
+        raise RuntimeError("LibreOffice no estÃ¡ disponible en el contenedor.")
     cmd = [bin_lo, "--headless", "--convert-to", "pdf", "--outdir", outdir, docx_path]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     base_pdf = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
@@ -338,7 +338,7 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
     if os.path.exists(generated) and generated != pdf_path:
         os.replace(generated, pdf_path)
     if not os.path.exists(pdf_path):
-        raise RuntimeError("LibreOffice no generó el PDF")
+        raise RuntimeError("LibreOffice no generÃ³ el PDF")
 
 def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     if os.name == "nt" and docx2pdf_convert is not None:
@@ -357,11 +357,11 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
 # -----------------------------------------------------------------------------
-# Selección de plantilla + Render DOCX (SIN BUCLES)
+# SelecciÃ³n de plantilla + Render DOCX (SIN BUCLES)
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
     """
-    Busca primero en /templates y si no hay nada, también en /out (FILES_DIR),
+    Busca primero en /templates y si no hay nada, tambiÃ©n en /out (FILES_DIR),
     por cualquier .docx que parezca plantilla.
     """
     dom = _dominio_servicio(info.get("servicio_label","")) or "otro"
@@ -380,7 +380,7 @@ def _select_template_path(info: dict) -> str:
 
     dirs_a_buscar = [
         os.path.join(BASE_DIR, "templates"),
-        FILES_DIR,  # también mira en /out por si subiste por /upload
+        FILES_DIR,  # tambiÃ©n mira en /out por si subiste por /upload
     ]
 
     # 1) por nombres preferidos
@@ -397,7 +397,7 @@ def _select_template_path(info: dict) -> str:
             for fname in os.listdir(d):
                 if fname.lower().endswith(".docx") and "template" in fname.lower():
                     p = os.path.join(d, fname)
-                    app.logger.info(f"[TPL] Usando plantilla genérica: {p}")
+                    app.logger.info(f"[TPL] Usando plantilla genÃ©rica: {p}")
                     return p
 
     # 3) cualquier .docx
@@ -412,66 +412,65 @@ def _select_template_path(info: dict) -> str:
     raise FileNotFoundError("No se encontraron plantillas DOCX en /templates ni en /out")
 
 
-def generar_docx_desde_plantilla(path: str, info: dict)->str:
+def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     tpl_path = _select_template_path(info)
     if not os.path.exists(tpl_path):
         raise FileNotFoundError(f"Plantilla no encontrada: {tpl_path}")
 
-    dom = _dominio_servicio(info.get("servicio_label",""))
+    dom = _dominio_servicio(info.get("servicio_label", ""))
     total_int = precio_total(info)
 
-    # Contexto base (las claves deben existir aunque queden vacías)
+    # Contexto base (claves siempre presentes)
     ctx = {
         "fecha": info["fecha"],
         "cliente": info["cliente"],
         "direccion": info["direccion"],
-        "comuna": info.get("comuna",""),
+        "comuna": info.get("comuna", ""),
         "contacto": info["contacto"],
         "email": info["email"],
 
         "servicio": info["servicio_label"],
         "descripcion": "",
-	"clausula_seremi": "",  # se rellena solo para plagas
 
-        # FILA DE LA TABLA (3 columnas)
+        # Fila de la tabla (3 columnas)
         "linea_servicio": "",
-        "linea_medida": "",   # campo genérico (u / m² / m³)
+        "linea_medida": "",              # genérico: u / m² / m³
         "linea_total": _fmt_money_clp(total_int),
 
         # Totales al pie
         "total": _fmt_money_clp(total_int),
         "precio": _fmt_money_clp(total_int),
 
-        # Compatibilidad con plantillas antiguas
+        # Compatibilidad plantillas antiguas
         "m2": "",
         "m3": "",
+
+        # Cláusula sanitaria (solo plagas)
+        "clausula_seremi": "",
     }
 
     if dom == "plagas":
-        # M2 como medida
+        # Medida = m²
         try:
             m2_val = float(info.get("m2", 0))
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_txt = str(info.get("m2","")) or ""
+            m2_txt = str(info.get("m2", "")) or ""
         ctx["m2"] = m2_txt
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"]  = m2_txt
-        ctx["descripcion"]   = f"{info['servicio_label']} — {m2_txt} m²" if m2_txt else info["servicio_label"]
-	ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
+        ctx["linea_medida"] = m2_txt
+        ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
+        ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
-        # Mostrar m² y m³ juntos en la misma celda
+        # Medida = “56 m² — 78.4 m³” (si aplica)
         m3_val = _volumen_estimado_m3(info)
-        if m3_val and float(m3_val).is_integer():
-            m3_txt = str(int(m3_val))
-        else:
-            m3_txt = str(m3_val) if m3_val else ""
+        m3_txt = (str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else ""))
         try:
             m2_val = float(info.get("m2") or 0)
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_txt = str(info.get("m2","")) or ""
+            m2_txt = str(info.get("m2", "")) or ""
 
         ctx["m2"] = m2_txt
         ctx["m3"] = m3_txt
@@ -479,31 +478,35 @@ def generar_docx_desde_plantilla(path: str, info: dict)->str:
         partes = []
         if m2_txt: partes.append(f"{m2_txt} m²")
         if m3_txt: partes.append(f"{m3_txt} m³")
-        ctx["linea_medida"]  = " — ".join(partes)
-        ctx["descripcion"]   = info["servicio_label"] + (f" — {ctx['linea_medida']}" if partes else "")
+        ctx["linea_medida"] = " — ".join(partes)
+        ctx["descripcion"] = info["servicio_label"] + (f" — {ctx['linea_medida']}" if partes else "")
+        ctx["clausula_seremi"] = ""  # explícito: no aplica
 
     elif dom == "camaras":
+        # Medida = “x N” y total recalculado
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
-            info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
+            info.get("tipo_camara", ""), info.get("area_vigilar", ""), info.get("cantidad_camara", "")
         )
-        ctx["total"]       = _fmt_money_clp(tot)
-        ctx["precio"]      = _fmt_money_clp(tot)
+        ctx["total"] = _fmt_money_clp(tot)
+        ctx["precio"] = _fmt_money_clp(tot)
         ctx["linea_total"] = _fmt_money_clp(tot)
 
         ctx["linea_servicio"] = f"Cámaras {tipo} ({area})"
-        ctx["linea_medida"]   = f"x {qty}"
-        ctx["descripcion"]    = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
+        ctx["linea_medida"] = f"x {qty}"
+        ctx["descripcion"] = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
+        ctx["clausula_seremi"] = ""
 
     else:
+        # Genérico
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"]   = ""
-        ctx["descripcion"]    = info["servicio_label"]
+        ctx["linea_medida"] = ""
+        ctx["descripcion"] = info["servicio_label"]
+        ctx["clausula_seremi"] = ""
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
     tpl.save(path)
-
-    return tpl_path  # ← devolvemos plantilla usada
+    return tpl_path
 
 # -----------------------------------------------------------------------------
 # WhatsApp helpers
@@ -537,15 +540,15 @@ def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
         return {"warn": "admin_or_twilio_not_configured"}
     sids = {}
     if resumen_texto:
-        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "🧾 *Nueva cotización*\n\n" + resumen_texto, delay=0.0)
+        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "ðŸ§¾ *Nueva cotizaciÃ³n*\n\n" + resumen_texto, delay=0.0)
     if pdf_url:
-        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📎 PDF de la cotización", pdf_url, delay=MEDIA_DELAY)
+        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "ðŸ“Ž PDF de la cotizaciÃ³n", pdf_url, delay=MEDIA_DELAY)
     if docx_url:
-        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"ðŸ“„ DOCX: {docx_url}", delay=MEDIA_DELAY)
     return sids
 
 # -----------------------------------------------------------------------------
-# Normalización de payload externo y generate
+# NormalizaciÃ³n de payload externo y generate
 # -----------------------------------------------------------------------------
 def normalize_payload(data: dict) -> dict:
     data = data or {}
@@ -561,12 +564,12 @@ def normalize_payload(data: dict) -> dict:
 
     # Piscinas y overrides
     profundidad    = _safe(data.get("profundidad"))
-    tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaño_piscina"))
+    tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaÃ±o_piscina"))
     m3_explicit    = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
     servicio_precio_override = _safe(data.get("servicio_precio"))
 
     try:
-        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
+        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("mÂ²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
 
@@ -578,7 +581,7 @@ def normalize_payload(data: dict) -> dict:
         elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
         elif digits:                  to_wa = f"whatsapp:+{digits}"
 
-    servicio_label  = servicio or "Desinsectación"
+    servicio_label  = servicio or "DesinsectaciÃ³n"
     servicio_precio = servicio_precio_override or _canon_servicio_para_precios(servicio_label)
 
     info = {
@@ -599,7 +602,7 @@ def normalize_payload(data: dict) -> dict:
         "tamano_piscina": tamano_piscina,
     }
 
-    # Si vino m3 explícito válido, guárdalo
+    # Si vino m3 explÃ­cito vÃ¡lido, guÃ¡rdalo
     try:
         if m3_explicit:
             info["m3"] = float(str(m3_explicit).replace(",", "."))
@@ -628,7 +631,7 @@ def handle_generate():
 
     faltantes = [k for k in ("servicio_label","cliente","direccion","contacto") if not info.get(k)]
     if faltantes:
-        return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
+        return jsonify(ok=True, message="Campos mÃ­nimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
 
     # Motor de PDF
@@ -668,22 +671,22 @@ def handle_generate():
     if dominio == "piscinas":
         vol = _volumen_estimado_m3(info)
         base_m2 = info.get('m2',0)
-        medidas_line = f"*Superficie:* {base_m2} m²" + (f" | *Volumen:* {vol} m³" if vol > 0 else "") + "\n"
+        medidas_line = f"*Superficie:* {base_m2} mÂ²" + (f" | *Volumen:* {vol} mÂ³" if vol > 0 else "") + "\n"
     elif dominio == "plagas":
-        medidas_line = f"*Superficie tratada:* {info.get('m2',0)} m²\n"
+        medidas_line = f"*Superficie tratada:* {info.get('m2',0)} mÂ²\n"
     elif dominio == "camaras":
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
-        detalle_line = f"*Cámaras:* {info.get('tipo_camara','')} ({area}) x {qty} — unit: {_fmt_money_clp(unit_ap)}\n"
+        detalle_line = f"*CÃ¡maras:* {info.get('tipo_camara','')} ({area}) x {qty} â€” unit: {_fmt_money_clp(unit_ap)}\n"
 
     partes = [
-        "✅ *Nueva solicitud recibida*\n",
+        "âœ… *Nueva solicitud recibida*\n",
         f"*Servicio:* {info['servicio_label']}\n",
         detalle_line,
         f"*Cliente:* {info['cliente']}\n",
         medidas_line,
-        f"*Ubicación:* {info['direccion']}\n",
+        f"*UbicaciÃ³n:* {info['direccion']}\n",
     ]
     if info.get("comuna"): partes.append(f"*Comuna:* {info['comuna']}\n")
     partes.extend([f"*Detalles:* {info.get('detalles','')}\n",
@@ -692,9 +695,9 @@ def handle_generate():
 
     sids = {}
     if info.get("to_whatsapp") and SEND_PDF:
-        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
+        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "ðŸ“Ž CotizaciÃ³n adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
-            send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+            send_whatsapp_text(info["to_whatsapp"], f"ðŸ“„ DOCX: {docx_url}", delay=MEDIA_DELAY)
 
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
@@ -710,7 +713,7 @@ def handle_generate():
                    to_wa=info.get("to_whatsapp",""), twilio=sids, dbg=dbg), 200
 
 # -----------------------------------------------------------------------------
-# Rutas básicas
+# Rutas bÃ¡sicas
 # -----------------------------------------------------------------------------
 @app.get("/")
 @app.get("/redis-ping")
@@ -761,7 +764,7 @@ def files(filename): return send_from_directory(FILES_DIR, filename, as_attachme
 def generate(): return handle_generate()
 
 # -----------------------------------------------------------------------------
-# /upload único (con token)
+# /upload Ãºnico (con token)
 # -----------------------------------------------------------------------------
 UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
 
@@ -810,16 +813,16 @@ def webhook():
         resp = MessagingResponse()
 
         if body_lc in {"hola","buenas","hey","buenos dias","buenas tardes","buenas noches","reiniciar","start","reset"}:
-            resp.message("Hola 👋. Endpoint activo. Para cotizar por REST usa /generate (POST JSON).")
+            resp.message("Hola ðŸ‘‹. Endpoint activo. Para cotizar por REST usa /generate (POST JSON).")
             return str(resp), 200, {"Content-Type":"application/xml"}
 
-        resp.message("🤖 Endpoint activo. Usa /generate para generar cotizaciones.")
+        resp.message("ðŸ¤– Endpoint activo. Usa /generate para generar cotizaciones.")
         return str(resp), 200, {"Content-Type":"application/xml"}
 
     except Exception:
-        logging.exception("❌ Error en webhook")
+        logging.exception("âŒ Error en webhook")
         resp = MessagingResponse()
-        resp.message("Lo siento, ocurrió un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
+        resp.message("Lo siento, ocurriÃ³ un error inesperado. Escribe *reiniciar* para empezar de nuevo.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
 # -----------------------------------------------------------------------------
