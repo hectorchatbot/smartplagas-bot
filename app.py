@@ -122,7 +122,7 @@ SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
 # -----------------------------------------------------------------------------
-# Precios y utilidades
+# Precios y utilidades (SIN CAMBIOS en tramos y valores)
 # -----------------------------------------------------------------------------
 TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
 PRECIOS = {
@@ -201,11 +201,33 @@ def _norm(s: str) -> str:
     s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", s).strip()
 
-def _dominio_servicio(label: str) -> str:
+def _canon_piscina_key(label: str) -> str:
+    """Mapea label humano a clave de precios de piscina."""
     s = _norm(label)
-    if "piscin" in s: return "piscinas"
-    if any(k in s for k in ("plaga","desratiz","desinsect","sanitiz")): return "plagas"
-    if "camar" in s: return "camaras"
+    if "plan intermedio" in s or ("tratamient" in s and "limpiez" in s): return "piscina_plan_intermedio_m3"
+    if ("bomba" in s) or ("filtro" in s) or ("mantencion" in s):         return "piscina_mantencion_bomba_m3"
+    if ("shock" in s) or ("clor" in s):                                   return "piscina_shock_m3"
+    if ("diagn" in s):                                                    return "piscina_diagnostico_total"
+    if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
+    return ""
+
+def _dominio_from_info(info: dict) -> str:
+    """
+    Detección robusta del dominio:
+    - Piscinas si label mapea a una key de piscina o si hay campos típicos (tamaño, profundidad, m3).
+    - Cámaras si hay tipo/cantidad/área de cámaras.
+    - Plagas si texto contiene plaga/desratiz/desinsect/sanitiz.
+    """
+    label = info.get("servicio_label","")
+    s = _norm(label)
+    if _canon_piscina_key(label): return "piscinas"
+    if "piscin" in s:             return "piscinas"
+    if info.get("tamano_piscina") or info.get("profundidad") or ("m3" in info):
+        return "piscinas"
+    if "camar" in s or info.get("tipo_camara") or info.get("cantidad_camara"):
+        return "camaras"
+    if any(k in s for k in ("plaga","desratiz","desinsect","sanitiz")):
+        return "plagas"
     return "otro"
 
 def _canon_servicio_para_precios(servicio_humano: str) -> str:
@@ -214,15 +236,6 @@ def _canon_servicio_para_precios(servicio_humano: str) -> str:
     if "desinfecc" in s: return "desinfeccion"
     if "desinsect" in s: return "desinsectacion"
     return "desinsectacion"
-
-def _canon_piscina_key(label: str) -> str:
-    s = _norm(label)
-    if "plan intermedio" in s or ("tratamient" in s and "limpiez" in s): return "piscina_plan_intermedio_m3"
-    if ("bomba" in s) or ("filtro" in s) or ("mantencion" in s):         return "piscina_mantencion_bomba_m3"
-    if ("shock" in s) or ("clor" in s):                                   return "piscina_shock_m3"
-    if ("diagn" in s):                                                    return "piscina_diagnostico_total"
-    if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
-    return ""
 
 # --- Parseo "6x3", "10 x 4,5", "8x4mts" o solo "56" -> m2 ---
 def parse_pool_size_to_m2(size_text: str) -> float:
@@ -277,27 +290,30 @@ def _volumen_estimado_m3(info: dict) -> float:
     return 0.0
 
 def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
-    if m3 <= 0 and serv_key.endswith("_m3"): return 0
     tabla = PRECIOS_PISCINA.get(serv_key)
     if not tabla: return 0
+    # Si el servicio es por m3 y no hay m3, aplicar m3 mínimo (fallback definitivo)
+    if serv_key.endswith("_m3") and (m3 is None or m3 <= 0):
+        m3 = PISCINA_MIN_M3_DEFAULT
+    # seleccionar tramo
     idx = len(TRAMOS_M3) - 1
     for i, (lo, hi) in enumerate(TRAMOS_M3):
         if lo <= m3 <= hi: idx = i; break
     if serv_key.endswith("_m3"):
         unit = tabla[idx]
-        if unit <= 0: return 0
         return int(round(unit * m3))
+    # tarifa fija por total
     return int(tabla[idx] or 0)
 
 def precio_total(info: dict) -> int:
-    dominio = _dominio_servicio(info.get("servicio_label",""))
+    dominio = _dominio_from_info(info)
     if dominio == "piscinas":
         label = info.get("servicio_label", "")
         override = (info.get("servicio_precio") or "").strip()
         key = override if override in PRECIOS_PISCINA else (_canon_piscina_key(label) or "piscina_plan_intermedio_m3")
         m3 = _volumen_estimado_m3(info)
-        # Fallback: si no hay datos, asumir volumen mínimo
-        if m3 <= 0 and key.endswith("_m3"):
+        # Fallback para TODOS los servicios por m3
+        if key.endswith("_m3") and (m3 is None or m3 <= 0):
             m3 = PISCINA_MIN_M3_DEFAULT
             info["__m3_asumido__"] = True
             info["__m3_asumido_val__"] = m3
@@ -389,7 +405,7 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
 # Selección de plantilla + Render DOCX
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
-    dom = _dominio_servicio(info.get("servicio_label","")) or "otro"
+    dom = _dominio_from_info(info) or "otro"
     por_dom = {
         "plagas":   ["cotizacion_plagas.docx",   "templatescotizacion_plagas.docx"],
         "piscinas": ["cotizacion_piscinas.docx", "templatescotizacion_piscinas.docx"],
@@ -423,9 +439,9 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     if not os.path.exists(tpl_path):
         raise FileNotFoundError(f"Plantilla no encontrada: {tpl_path}")
 
-    dom = _dominio_servicio(info.get("servicio_label", ""))
+    dom = _dominio_from_info(info)
 
-    # Calcula total inicial (se puede recalcular para piscinas más abajo)
+    # Calcula total inicial con lógica robusta (para setear __m3_asumido__ si aplica)
     total_int = precio_total(info)
 
     ctx = {
@@ -460,13 +476,12 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
-        # m²
+        # Valores base
         try:
             m2_val = float(info.get("m2") or 0)
         except Exception:
             m2_val = 0.0
 
-        # profundidad
         prof_raw = info.get("profundidad")
         prof_val = None
         if prof_raw not in (None, ""):
@@ -475,45 +490,46 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
             except Exception:
                 prof_val = None
 
-        # m³ (con fallback si es necesario)
-        m3_val = _volumen_estimado_m3(info)
-        m3_asumido = False
-        if m3_val <= 0:
-            m3_asumido = True
-            m3_val = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
-
-        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
-        m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
-
-        # clave y total
+        # m³ (con fallback garantizado para servicios _m3)
         label = info.get("servicio_label", "")
         key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
+        m3_val = _volumen_estimado_m3(info)
+        if key.endswith("_m3") and (m3_val is None or m3_val <= 0):
+            m3_val = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
+            info["__m3_asumido__"] = True
+            info["__m3_asumido_val__"] = m3_val
+
         total_int = _precio_piscina_por_tramo(key, m3_val)
 
-        # rellenar campos monetarios
         ctx["precio"] = _fmt_money_clp(total_int)
         ctx["total"]  = _fmt_money_clp(total_int)
         ctx["linea_total"] = _fmt_money_clp(total_int)
+
+        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+        m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
 
         ctx["m2"] = m2_txt
         ctx["m3"] = m3_txt
 
         # cantidad (linea_medida) + descripción
-        if m3_val > 0 and not m3_asumido:
-            ctx["linea_medida"] = f"{m3_txt} m³"
-            ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³"
-        elif m3_val > 0 and m3_asumido:
-            ctx["linea_medida"] = f"{m3_txt} m³ (asumido)"
-            ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³ (asumido)"
-        elif m2_val > 0:
-            depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
-            aprox_m3 = int(round(m2_val * depth))
-            ctx["linea_medida"] = f"{int(m2_val)} m² × {depth} m ≈ {aprox_m3} m³"
-            ctx["descripcion"]  = f"{info['servicio_label']} — {ctx['linea_medida']}"
+        if key.endswith("_m3"):
+            # Siempre mostrar m³ (asumido o no)
+            if info.get("__m3_asumido__"):
+                ctx["linea_medida"] = f"{m3_txt} m³ (asumido)"
+                ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³ (asumido)"
+            else:
+                ctx["linea_medida"] = f"{m3_txt} m³"
+                ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³"
         else:
-            # último fallback (no debería ocurrir ya con el asumido)
-            ctx["linea_medida"] = "1"
-            ctx["descripcion"]  = info["servicio_label"]
+            # Servicios de tarifa fija: mostrar m² × profundidad si hay, sino 1
+            if m2_val > 0:
+                depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
+                aprox_m3 = int(round(m2_val * depth))
+                ctx["linea_medida"] = f"{int(m2_val)} m² × {depth} m ≈ {aprox_m3} m³"
+                ctx["descripcion"]  = f"{info['servicio_label']} — {ctx['linea_medida']}"
+            else:
+                ctx["linea_medida"] = "1"
+                ctx["descripcion"]  = info["servicio_label"]
 
         ctx["linea_servicio"] = info["servicio_label"]
         ctx["clausula_seremi"] = ""
@@ -673,6 +689,10 @@ def handle_generate():
     payload = _read_payload_any()
     info = normalize_payload(payload)
 
+    # Si es piscina detectada por estructura/texto, asegurar prefijo claro
+    if _dominio_from_info(info) == "piscinas" and "piscin" not in _norm(info.get("servicio_label","")):
+        info["servicio_label"] = f"Piscinas – {info.get('servicio_label','')}"
+
     faltantes = [k for k in ("servicio_label","cliente","direccion","contacto") if not info.get(k)]
     if faltantes:
         return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
@@ -707,7 +727,7 @@ def handle_generate():
     total_int = precio_total(info)
     total = _fmt_money_clp(total_int)
 
-    dominio = _dominio_servicio(info.get("servicio_label",""))
+    dominio = _dominio_from_info(info)
     medidas_line = ""; detalle_line = ""
     if dominio == "piscinas":
         vol = _volumen_estimado_m3(info)
@@ -1011,11 +1031,11 @@ def _compose_payload_from_vars(vars_, from_wa: str):
     cantidad_camara = vars_.get("cantidad_camara", "")
     area_vigilar = vars_.get("area_vigilar", "")
 
-    servicio_label = ""
-    if "piscin" in servicio.lower():
-        servicio_label = subservicio or "Piscinas"
-    elif "cámara" in servicio.lower() or "camara" in servicio.lower():
-        servicio_label = "Cámaras"
+    # Etiqueta visible del servicio
+    if "piscin" in (servicio or "").lower():
+        servicio_label = f"Piscinas – {subservicio or 'Servicio'}"
+    elif "cámara" in (servicio or "").lower() or "camara" in (servicio or "").lower():
+        servicio_label = f"Cámaras – {subservicio or 'Servicio'}"
     else:
         servicio_label = subservicio or "Control de Plagas"
 
@@ -1046,6 +1066,10 @@ def _flow_finish_and_generate(resp, form, sess):
     payload = _compose_payload_from_vars(vars_, from_wa)
 
     info = normalize_payload(payload)
+
+    # Seguridad extra: prefijo “Piscinas – …” si aplica
+    if _dominio_from_info(info) == "piscinas" and "piscin" not in _norm(info.get("servicio_label","")):
+        info["servicio_label"] = f"Piscinas – {info.get('servicio_label','')}"
 
     if (docx2pdf_convert is None) and (not _lo_bin()):
         resp.message("⚠️ No pude generar PDF por un problema interno de conversión. Intentaremos de nuevo pronto.")
