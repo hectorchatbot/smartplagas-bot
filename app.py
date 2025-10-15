@@ -177,7 +177,6 @@ def precio_servicio(servicio_key: str, m2: float) -> int:
     idx = tramo_index(float(m2))
     return PRECIOS[key][idx]
 
-}
 TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
     "piscina_plan_intermedio_m3":  [4400,3800,3500,3250],
@@ -186,6 +185,7 @@ PRECIOS_PISCINA = {
     "piscina_diagnostico_total":   [34000,39000,45000,50500],
     "piscina_cambio_arena_total":  [101000,157000,224000,336000],
 }
+
 CAM_PRECIOS = {
     "alambricas":   {"interior":77000,"exterior":99000},
     "inalambricas": {"interior":66000,"exterior":88000},
