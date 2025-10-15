@@ -126,23 +126,23 @@ twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 # -----------------------------------------------------------------------------
 TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
 PRECIOS = {
-    "desinsectacion":[37500,47500,65000,80000,105000,165000,270000,440000],
-    "desratizacion": [34000,44000,60000,75000, 97500,150000,235000,375000],
-    "desinfeccion":  [30000,40000,55000,70000, 90000,140000,220000,350000],
+    "desinsectacion":[56000,71250,97500,120000,157500,247500,405000,660000],
+    "desratizacion": [51000,66000,90000,112500,146250,225000,352500,562500],
+    "desinfeccion":  [42000,56000,77000,98000,126000,196000,308000,490000],
 }
 TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
-    "piscina_plan_intermedio_m3":  [3900,3400,3100,2900],
-    "piscina_mantencion_bomba_m3": [3200,3000,2800,2600],
-    "piscina_shock_m3":            [1500,1300,1100,900],
-    "piscina_diagnostico_total":   [30000,35000,40000,45000],
-    "piscina_cambio_arena_total":  [90000,140000,200000,300000],
+    "piscina_plan_intermedio_m3":  [4400,3800,3500,3250],
+    "piscina_mantencion_bomba_m3": [3600,3350,3150,2900],
+    "piscina_shock_m3":            [1700,1450,1250,1000],
+    "piscina_diagnostico_total":   [34000,39000,45000,50500],
+    "piscina_cambio_arena_total":  [101000,157000,224000,336000],
 }
 CAM_PRECIOS = {
-    "alambricas":   {"interior":70000,"exterior":90000},
-    "inalambricas": {"interior":60000,"exterior":80000},
-    "solares":      {"exterior":150000},
-    "dvr":          {"interior":75000,"exterior":95000},
+    "alambricas":   {"interior":77000,"exterior":99000},
+    "inalambricas": {"interior":66000,"exterior":88000},
+    "solares":      {"exterior":165000},
+    "dvr":          {"interior":82500,"exterior":104500},
 }
 
 def _fmt_money_clp(v:int)->str:
@@ -352,6 +352,23 @@ def build_urls(filename_docx: str, filename_pdf: str):
             return f"{u}{sep}ngrok-skip-browser-warning=true"
         return u
     return _bypass(docx_url), _bypass(pdf_url)
+
+
+# --- Marketing "desde" (interior/exterior/completo) con split 60/40 ---
+SPLIT_IE = {"interior": 0.60, "exterior": 0.40}
+
+def precios_desde_por_servicio(serv_key: str) -> dict:
+    """Retorna 'desde' usando el primer tramo (0-50 m²) y split 60/40."""
+    tabla = PRECIOS.get(serv_key)
+    if not tabla:
+        return {}
+    base = int(tabla[0])  # tramo 0-50 m² como "desde"
+    return {
+        "completo": base,
+        "interior": int(round(base * SPLIT_IE["interior"])),
+        "exterior": int(round(base * SPLIT_IE["exterior"])),
+    }
+
 
 # -----------------------------------------------------------------------------
 # DOCX -> PDF
@@ -1158,17 +1175,67 @@ def webhook():
         sess["node_id"] = next_id
 
     elif node.get("type") == "condicional":
-        chosen = _try_pick_option(node, body)
-        if not chosen:
-            _send_menu(resp, node)
-            _sess_set(sess_id, sess)
-            return str(resp), 200, {"Content-Type":"application/xml"}
+    chosen = _try_pick_option(node, body)
+    if not chosen:
+        _send_menu(resp, node)
+        _sess_set(sess_id, sess)
+        return str(resp), 200, {"Content-Type":"application/xml"}
 
-        save_as = chosen.get("saveAs")
-        if save_as:
-            vars_[save_as] = chosen.get("text", "")
-        sess["vars"] = vars_
-        sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+    save_as = chosen.get("saveAs")
+    if save_as:
+        vars_[save_as] = chosen.get("text", "")
+
+    # === INICIO: Mensajes "desde" automáticos sin tocar el JSON ===
+    try:
+        current_node_id = str(node.get("id") or "")
+        sel_text = (chosen.get("text") or "").lower()
+
+        # 1) Cuando eligen el subservicio de plagas (desratización / desinsectación / sanitización)
+        #    Node IDs de tu JSON:
+        #    - 1748910215188 pregunta "¿En qué servicio de Control de Plagas?"
+        if current_node_id == "1748910215188":
+            # subservicio quedó guardado en vars_ por saveAs="subservicio"
+            subserv_label = vars_.get("subservicio", "")
+            serv_key = _canon_servicio_para_precios(subserv_label)  # -> desratizacion/desinsectacion/desinfeccion
+            mk = precios_desde_por_servicio(serv_key)
+            if mk:
+                resp.message(
+                    "💸 *Precios “desde” (referencia)*\n"
+                    f"• Interior: {_fmt_money_clp(mk['interior'])}\n"
+                    f"• Exterior: {_fmt_money_clp(mk['exterior'])}\n"
+                    f"• Completo: {_fmt_money_clp(mk['completo'])}\n"
+                    "🔐 *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
+                )
+
+        # 2) Cuando eligen el alcance (interior / exterior / ambas) para plagas
+        #    Node IDs de tu JSON:
+        #    - 1748911338220 (desratización: interior/exterior/ambas)
+        #    - 1748912010712 (desinsectación: interior/exterior/ambas)
+        #    - 1748912322554 (sanitización: interior/exterior/ambas)
+        if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
+            subserv_label = vars_.get("subservicio", "")
+            serv_key = _canon_servicio_para_precios(subserv_label)
+            mk = precios_desde_por_servicio(serv_key)
+            if mk:
+                if "interior" in sel_text:
+                    val = mk["interior"]; etiqueta = "Interior"
+                elif "exterior" in sel_text:
+                    val = mk["exterior"]; etiqueta = "Exterior"
+                else:
+                    val = mk["completo"]; etiqueta = "Completo (interior + exterior)"
+                resp.message(
+                    f"💡 {etiqueta} *desde* {_fmt_money_clp(val)}.\n"
+                    "📏 El valor final se ajusta según m² y complejidad.\n"
+                    "🔐 *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
+                )
+    except Exception as _e:
+        app.logger.warning(f"[mk_desde] aviso no crítico: {_e}")
+
+    # === FIN: Mensajes "desde" automáticos ===
+
+    sess["vars"] = vars_
+    sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+
 
     else:
         sess["node_id"] = node.get("nextId")
