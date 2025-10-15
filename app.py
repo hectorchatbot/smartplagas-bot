@@ -122,7 +122,7 @@ SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
 # -----------------------------------------------------------------------------
-# Precios y utilidades (SIN CAMBIOS en tramos y valores)
+# Precios y utilidades
 # -----------------------------------------------------------------------------
 TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
 PRECIOS = {
@@ -353,7 +353,6 @@ def build_urls(filename_docx: str, filename_pdf: str):
         return u
     return _bypass(docx_url), _bypass(pdf_url)
 
-
 # --- Marketing "desde" (interior/exterior/completo) con split 60/40 ---
 SPLIT_IE = {"interior": 0.60, "exterior": 0.40}
 
@@ -368,7 +367,6 @@ def precios_desde_por_servicio(serv_key: str) -> dict:
         "interior": int(round(base * SPLIT_IE["interior"])),
         "exterior": int(round(base * SPLIT_IE["exterior"])),
     }
-
 
 # -----------------------------------------------------------------------------
 # DOCX -> PDF
@@ -499,14 +497,6 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         except Exception:
             m2_val = 0.0
 
-        prof_raw = info.get("profundidad")
-        prof_val = None
-        if prof_raw not in (None, ""):
-            try:
-                prof_val = float(str(prof_raw).replace(",", "."))
-            except Exception:
-                prof_val = None
-
         # m³ (con fallback garantizado para servicios _m3)
         label = info.get("servicio_label", "")
         key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
@@ -524,49 +514,15 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
 
         m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
         m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
-
         ctx["m2"] = m2_txt
         ctx["m3"] = m3_txt
-
-        # cantidad (linea_medida) + descripción
-        if key.endswith("_m3"):
-            # Siempre mostrar m³ (asumido o no)
-            if info.get("__m3_asumido__"):
-                ctx["linea_medida"] = f"{m3_txt} m³ (asumido)"
-                ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³ (asumido)"
-            else:
-                ctx["linea_medida"] = f"{m3_txt} m³"
-                ctx["descripcion"]  = f"{info['servicio_label']} — {m3_txt} m³"
-        else:
-            # Servicios de tarifa fija: mostrar m² × profundidad si hay, sino 1
-            if m2_val > 0:
-                depth = prof_val if (prof_val is not None and prof_val > 0) else POOL_DEFAULT_DEPTH
-                aprox_m3 = int(round(m2_val * depth))
-                ctx["linea_medida"] = f"{int(m2_val)} m² × {depth} m ≈ {aprox_m3} m³"
-                ctx["descripcion"]  = f"{info['servicio_label']} — {ctx['linea_medida']}"
-            else:
-                ctx["linea_medida"] = "1"
-                ctx["descripcion"]  = info["servicio_label"]
-
         ctx["linea_servicio"] = info["servicio_label"]
-        ctx["clausula_seremi"] = ""
-
-    elif dom == "camaras":
-        tot, tipo, qty, unit_ap, area = calcular_total_camaras(
-            info.get("tipo_camara", ""), info.get("area_vigilar", ""), info.get("cantidad_camara", "")
-        )
-        ctx["total"] = _fmt_money_clp(tot)
-        ctx["precio"] = _fmt_money_clp(tot)
-        ctx["linea_total"] = _fmt_money_clp(tot)
-        ctx["linea_servicio"] = f"Cámaras {tipo} ({area})"
-        ctx["linea_medida"] = f"x {qty}"
-        ctx["descripcion"] = f"{info.get('tipo_camara','')} ({area}) x {qty} — {_fmt_money_clp(unit_ap)} c/u"
-        ctx["clausula_seremi"] = ""
-    else:
-        ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"] = "1"
+        ctx["linea_medida"] = m3_txt if m3_txt else (m2_txt if m2_txt else "1")
         ctx["descripcion"] = info["servicio_label"]
         ctx["clausula_seremi"] = ""
+
+    else:
+        ctx["descripcion"] = info["servicio_label"]
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
@@ -607,9 +563,9 @@ def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
     if resumen_texto:
         sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "🧾 *Nueva cotización*\n\n" + resumen_texto, delay=0.0)
     if pdf_url:
-        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📎 PDF de la cotización", pdf_url, delay=MEDIA_DELAY)
+        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📄 PDF de la cotización", pdf_url, delay=MEDIA_DELAY)
     if docx_url:
-        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"🖹 DOCX: {docx_url}", delay=MEDIA_DELAY)
     return sids
 
 # -----------------------------------------------------------------------------
@@ -776,9 +732,9 @@ def handle_generate():
 
     sids = {}
     if info.get("to_whatsapp") and SEND_PDF:
-        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📎 Cotización adjunta", pdf_url, MEDIA_DELAY)
+        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📄 Cotización adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
-            send_whatsapp_text(info["to_whatsapp"], f"📄 DOCX: {docx_url}", delay=MEDIA_DELAY)
+            send_whatsapp_text(info["to_whatsapp"], f"🖹 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
@@ -851,89 +807,8 @@ def _complete(info: dict) -> bool:
     return True
 
 # -----------------------------------------------------------------------------
-# Rutas básicas
+# FLUJO
 # -----------------------------------------------------------------------------
-@app.get("/")
-@app.get("/redis-ping")
-def redis_ping():
-    if not _r: return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
-    try: return jsonify(ok=True, pong=_r.ping()), 200
-    except Exception as e: return jsonify(ok=False, error=str(e)), 500
-
-@app.get("/health")
-def health():
-    try:
-        tdir = os.path.join(BASE_DIR, "templates")
-        odir = FILES_DIR
-        t_listing = sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []
-        o_listing = sorted(os.listdir(odir)) if os.path.isdir(odir) else []
-    except Exception as e:
-        t_listing, o_listing = [f"error: {e}"], []
-
-    lo_ok = bool(_lo_bin())
-    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
-    return jsonify({
-        "ok": True,
-        "service": "smartplagas-bot",
-        "time": datetime.datetime.utcnow().isoformat()+"Z",
-        "base_url": public_base_from_request(),
-        "templates_dirs": TEMPLATE_DIRS,
-        "out_dir": odir,
-        "templates_listing_main": t_listing,
-        "out_listing": o_listing,
-        "pdf_engine": engine,
-    }), 200
-
-@app.get("/whoami")
-def whoami():
-    return jsonify({
-        "app": "smartplagas-bot",
-        "version": APP_VERSION,
-        "routes": ["/", "/whoami", "/health", "/generate", "/upload", "/files/<name>", "/webhook", "/reload-flow"]
-    }), 200
-
-@app.route("/files/<path:filename>")
-def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
-
-# -----------------------------------------------------------------------------
-# /generate (REST)
-# -----------------------------------------------------------------------------
-@app.post("/generate")
-def generate(): return handle_generate()
-
-# -----------------------------------------------------------------------------
-# /upload único (con token)
-# -----------------------------------------------------------------------------
-UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
-
-@app.route("/upload", methods=["POST", "OPTIONS"])
-def upload_pdf():
-    if request.method == "OPTIONS":
-        return ("", 204)
-
-    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    if not token:
-        token = request.headers.get("X-Upload-Token", "").strip()
-    if not UPLOAD_TOKEN or token != UPLOAD_TOKEN:
-        return jsonify(ok=False, error="unauthorized"), 401
-
-    f = request.files.get("file") or request.files.get("pdf") or request.files.get("document")
-    if not f or not f.filename:
-        return jsonify(ok=False, error="missing file"), 400
-
-    os.makedirs(FILES_DIR, exist_ok=True)
-    safe_name = secure_filename(f.filename or "archivo.pdf")
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_name = f"{ts}_{safe_name}"
-    out_path = os.path.join(FILES_DIR, out_name)
-    f.save(out_path)
-
-    public = public_base_from_request().rstrip("/")
-    url = f"{public}/files/{out_name}"
-    return jsonify(ok=True, url=url, saved=out_name), 200
-
-# =====================[ FLUJO: chatbot-flujo.json ]=====================
-
 FLOW_JSON_PATH = os.getenv("FLOW_JSON_PATH", os.path.join(BASE_DIR, "chatbot-flujo.json"))
 
 def _flow_load():
@@ -1028,7 +903,7 @@ def _map_rango_m2_to_number(rango: str) -> int:
     s = rango.lower()
     if "menos" in s or "<" in s or ("100" in s and "200" not in s): return 90
     if "100" in s and "200" in s: return 150
-    if "200" in s or "más" in s or "mas" in s or ">" in s: return 250
+    if "200" in s or "más" in s or ">" in s: return 250
     return 0
 
 def _compose_payload_from_vars(vars_, from_wa: str):
@@ -1101,7 +976,7 @@ def _flow_finish_and_generate(resp, form, sess):
     try:
         tpl_used = generar_docx_desde_plantilla(docx_path, info)
         convertir_docx_a_pdf(docx_path, pdf_path)
-    except Exception as e:
+    except Exception:
         app.logger.exception("gen-fail")
         resp.message("⚠️ No pude generar la cotización. Intenta nuevamente.")
         return
@@ -1138,6 +1013,7 @@ def webhook():
     body_lc = body.lower()
     msg_sid = (form.get("MessageSid") or "").strip()
 
+    # Deduplicar
     if not _dedup_should_process(msg_sid):
         return str(MessagingResponse()), 200, {"Content-Type": "application/xml"}
 
@@ -1145,101 +1021,182 @@ def webhook():
     sess_id = _sess_key(form) or "anon"
     sess = _sess_get(sess_id) or {"node_id": _flow_start_id(), "vars": {}}
 
+    # Reinicio rápido del flujo
     if body_lc in {"reiniciar", "reset", "start", "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}:
         sess = {"node_id": _flow_start_id(), "vars": {}}
         _flow_emit_until_input(resp, sess)
         _sess_set(sess_id, sess)
-        return str(resp), 200, {"Content-Type":"application/xml"}
+        return str(resp), 200, {"Content-Type": "application/xml"}
 
+    # Si no hay flujo cargado
     if not _FLOW or not sess.get("node_id"):
         resp.message("🤖 Endpoint activo. Usa /generate (POST JSON) para cotizar por REST.")
-        return str(resp), 200, {"Content-Type":"application/xml"}
+        return str(resp), 200, {"Content-Type": "application/xml"}
 
     current_id = sess.get("node_id")
     node = _FLOW.get(current_id)
 
+    # Nodo inválido → reinicia
     if not node:
         sess = {"node_id": _flow_start_id(), "vars": {}}
         _flow_emit_until_input(resp, sess)
         _sess_set(sess_id, sess)
-        return str(resp), 200, {"Content-Type":"application/xml"}
+        return str(resp), 200, {"Content-Type": "application/xml"}
 
     vars_ = sess.get("vars", {})
 
-if node.get("type") == "pregunta":
-    varname = node.get("variableName", "").strip()
-    if varname:
-        vars_[varname] = body
-    next_id = node.get("nextId")
-    sess["vars"] = vars_
-    sess["node_id"] = next_id
+    # -------------------- PROCESA EL NODO --------------------
+    if node.get("type") == "pregunta":
+        varname = (node.get("variableName") or "").strip()
+        if varname:
+            vars_[varname] = body
+        sess["vars"] = vars_
+        sess["node_id"] = node.get("nextId")
 
-elif node.get("type") == "condicional":
-    chosen = _try_pick_option(node, body)
-    if not chosen:
-        _send_menu(resp, node)
-        _sess_set(sess_id, sess)
-        return str(resp), 200, {"Content-Type":"application/xml"}
+    elif node.get("type") == "condicional":
+        chosen = _try_pick_option(node, body)
+        if not chosen:
+            _send_menu(resp, node)
+            _sess_set(sess_id, sess)
+            return str(resp), 200, {"Content-Type": "application/xml"}
 
-    save_as = chosen.get("saveAs")
-    if save_as:
-        vars_[save_as] = chosen.get("text", "")
+        save_as = chosen.get("saveAs")
+        if save_as:
+            vars_[save_as] = chosen.get("text", "")
 
-    # === INICIO: Mensajes “desde” automáticos ===
+        # Mensajes “desde” automáticos (split 60/40 interior/exterior)
+        try:
+            current_node_id = str(node.get("id") or "")
+            sel_text = (chosen.get("text") or "").lower()
+
+            # Tipo de plaga
+            if current_node_id == "1748910215188":
+                subserv_label = vars_.get("subservicio", "")
+                serv_key = _canon_servicio_para_precios(subserv_label)
+                mk = precios_desde_por_servicio(serv_key)
+                if mk:
+                    resp.message(
+                        "Precios desde (referencia):\n"
+                        f"- Interior: {_fmt_money_clp(mk['interior'])}\n"
+                        f"- Exterior: {_fmt_money_clp(mk['exterior'])}\n"
+                        f"- Completo: {_fmt_money_clp(mk['completo'])}\n"
+                        "Normativa: DS 594 - SEREMI - Informe sanitario."
+                    )
+
+            # Interior/Exterior/Ambas
+            if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
+                subserv_label = vars_.get("subservicio", "")
+                serv_key = _canon_servicio_para_precios(subserv_label)
+                mk = precios_desde_por_servicio(serv_key)
+                if mk:
+                    if "interior" in sel_text:
+                        val = mk["interior"]; etq = "Interior"
+                    elif "exterior" in sel_text:
+                        val = mk["exterior"]; etq = "Exterior"
+                    else:
+                        val = mk["completo"]; etq = "Completo (interior + exterior)"
+                    resp.message(
+                        f"{etq} desde {_fmt_money_clp(val)}.\n"
+                        "El valor final se ajusta según m² y complejidad.\n"
+                        "Normativa: DS 594 - SEREMI - Informe sanitario."
+                    )
+        except Exception as e2:
+            app.logger.warning(f"[mk_desde] {e2}")
+
+        sess["vars"] = vars_
+        sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+
+    else:
+        sess["node_id"] = node.get("nextId")
+
+    # -------------------- CONTINUACIÓN DEL FLUJO --------------------
+    _flow_emit_until_input(resp, sess)
+
+    if not sess.get("node_id"):
+        _flow_finish_and_generate(resp, form, sess)
+
+    _sess_set(sess_id, sess)
+    return str(resp), 200, {"Content-Type": "application/xml"}
+
+# -----------------------------------------------------------------------------
+@app.get("/")
+@app.get("/redis-ping")
+def redis_ping():
+    if not _r: return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
+    try: return jsonify(ok=True, pong=_r.ping()), 200
+    except Exception as e: return jsonify(ok=False, error=str(e)), 500
+
+@app.get("/health")
+def health():
     try:
-        current_node_id = str(node.get("id") or "")
-        sel_text = (chosen.get("text") or "").lower()
+        tdir = os.path.join(BASE_DIR, "templates")
+        odir = FILES_DIR
+        t_listing = sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []
+        o_listing = sorted(os.listdir(odir)) if os.path.isdir(odir) else []
+    except Exception as e:
+        t_listing, o_listing = [f"error: {e}"], []
 
-        # 1) Cuando elige el tipo de plaga (desratización / desinsectación / sanitización)
-        if current_node_id == "1748910215188":
-            subserv_label = vars_.get("subservicio", "")
-            serv_key = _canon_servicio_para_precios(subserv_label)
-            mk = precios_desde_por_servicio(serv_key)
-            if mk:
-                resp.message(
-                    "💸 *Precios “desde” (referencia)*\n"
-                    f"• Interior: {_fmt_money_clp(mk['interior'])}\n"
-                    f"• Exterior: {_fmt_money_clp(mk['exterior'])}\n"
-                    f"• Completo: {_fmt_money_clp(mk['completo'])}\n"
-                    "🔐 *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
-                )
+    lo_ok = bool(_lo_bin())
+    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
+    return jsonify({
+        "ok": True,
+        "service": "smartplagas-bot",
+        "time": datetime.datetime.utcnow().isoformat()+"Z",
+        "base_url": public_base_from_request(),
+        "templates_dirs": TEMPLATE_DIRS,
+        "out_dir": odir,
+        "templates_listing_main": t_listing,
+        "out_listing": o_listing,
+        "pdf_engine": engine,
+    }), 200
 
-        # 2) Cuando elige interior/exterior/ambas
-        if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
-            subserv_label = vars_.get("subservicio", "")
-            serv_key = _canon_servicio_para_precios(subserv_label)
-            mk = precios_desde_por_servicio(serv_key)
-            if mk:
-                if "interior" in sel_text:
-                    val = mk["interior"]; etiqueta = "Interior"
-                elif "exterior" in sel_text:
-                    val = mk["exterior"]; etiqueta = "Exterior"
-                else:
-                    val = mk["completo"]; etiqueta = "Completo (interior + exterior)"
-                resp.message(
-                    f"💡 {etiqueta} *desde* {_fmt_money_clp(val)}.\n"
-                    "📏 El valor final se ajusta según m² y complejidad.\n"
-                    "🔐 *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
-                )
-    except Exception as _e:
-        app.logger.warning(f"[mk_desde] aviso no crítico: {_e}")
-    # === FIN: Mensajes “desde” automáticos ===
+@app.get("/whoami")
+def whoami():
+    return jsonify({
+        "app": "smartplagas-bot",
+        "version": APP_VERSION,
+        "routes": ["/", "/whoami", "/health", "/generate", "/upload", "/files/<name>", "/webhook", "/reload-flow"]
+    }), 200
 
-    sess["vars"] = vars_
-    sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+@app.route("/files/<path:filename>")
+def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
 
-else:
-    sess["node_id"] = node.get("nextId")
+# -----------------------------------------------------------------------------
+# /generate (REST)
+# -----------------------------------------------------------------------------
+@app.post("/generate")
+def generate(): return handle_generate()
 
-# ⬇️ Estas líneas VAN FUERA del if/elif/else (al mismo nivel que el if)
-_flow_emit_until_input(resp, sess)
+# -----------------------------------------------------------------------------
+# /upload único (con token)
+# -----------------------------------------------------------------------------
+UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
 
-if not sess.get("node_id"):
-    _flow_finish_and_generate(resp, form, sess)
+@app.route("/upload", methods=["POST", "OPTIONS"])
+def upload_pdf():
+    if request.method == "OPTIONS":
+        return ("", 204)
 
-_sess_set(sess_id, sess)
-return str(resp), 200, {"Content-Type":"application/xml"}
+    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not token:
+        token = request.headers.get("X-Upload-Token", "").strip()
+    if not UPLOAD_TOKEN or token != UPLOAD_TOKEN:
+        return jsonify(ok=False, error="unauthorized"), 401
 
+    f = request.files.get("file") or request.files.get("pdf") or request.files.get("document")
+    if not f or not f.filename:
+        return jsonify(ok=False, error="missing file"), 400
+
+    os.makedirs(FILES_DIR, exist_ok=True)
+    safe_name = secure_filename(f.filename or "archivo.pdf")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"{ts}_{safe_name}"
+    out_path = os.path.join(FILES_DIR, out_name)
+    f.save(out_path)
+
+    public = public_base_from_request().rstrip("/")
+    url = f"{public}/files/{out_name}"
+    return jsonify(ok=True, url=url, saved=out_name), 200
 
 # -----------------------------------------------------------------------------
 @app.post("/reload-flow")
@@ -1259,3 +1216,4 @@ _log_url_map()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True, use_reloader=False)
+
