@@ -200,6 +200,56 @@ CAM_PRECIOS = {
     "dvr":          {"interior":82500,"exterior":104500},
 }
 
+# =====================[ FACTORES INTERIOR/EXTERIOR ]==========================
+SPLIT_IE = {"interior": 0.6, "exterior": 0.4, "ambas": 1.0}
+
+def _norm(s: str) -> str:
+    return str(s or "").strip().lower()
+
+def _normaliza_alcance(v) -> str:
+    s = _norm(v)
+    # soporta números del flujo y alias comunes
+    mapa = {
+        "1": "interior", "int": "interior",
+        "2": "exterior", "ext": "exterior",
+        "3": "ambas", "ambos": "ambas", "ambas zonas": "ambas",
+    }
+    return mapa.get(s, s if s in SPLIT_IE else "ambas")
+
+def _extrae_alcance(info: dict) -> str:
+    """
+    Trata de encontrar el alcance en varios campos posibles del flujo.
+    Añade aquí otros alias si tu JSON usa otro nombre.
+    """
+    candidatos = [
+        info.get("alcance"),
+        info.get("alcance_plagas"),
+        info.get("tipo_lugar"),
+        info.get("tipo_desinsectacion"),
+        info.get("servicio_desinsectacion"),
+        info.get("desinsectacion_tipo"),
+        info.get("zona_servicio"),
+        info.get("servicio_plagas_tipo"),
+        info.get("servicio_tipo"),
+        info.get("ambito"),  # por si acaso
+    ]
+    for c in candidatos:
+        if c:
+            return _normaliza_alcance(c)
+    return "ambas"
+
+def precio_plagas_total(servicio_key: str, m2: float, info: dict) -> int:
+    """
+    Precio final para desinsectación/desratización aplicando Interior/Exterior/Ambas.
+    - Base de tramo: BASE_DESINSECTACION
+    - Factor: SPLIT_IE
+    """
+    idx = tramo_index(float(m2))
+    base = BASE_DESINSECTACION[idx]
+    alcance = _extrae_alcance(info)
+    factor = SPLIT_IE.get(alcance, 1.0)
+    return int(round(base * factor))
+
 # =====================[ FACTORES Y HELPERS PLAGAS ]=====================
 FACTOR_INTERIOR = 0.6
 FACTOR_EXTERIOR = 0.4
@@ -872,6 +922,15 @@ def aplicar_factor_control_plagas(base, tipo, scope):
 def normalize_payload(data: dict) -> dict:
     data = data or {}
 
+    # NUEVO: alcance (interior/exterior/ambas) desde distintas claves posibles
+    alcance = _safe(
+        data.get("alcance") or
+        data.get("scope") or
+        data.get("interior_exterior") or
+        data.get("area_plaga") or
+        data.get("zona")
+    )
+
     servicio  = _safe(data.get("servicioinicial") or data.get("servicio") or data.get("servicio_inicial"))
     cliente   = _safe(data.get("tipo_clientes")   or data.get("cliente")  or data.get("tipo_cliente") or "Residencial")
     m2_raw    = _safe(data.get("metro_2")         or data.get("m2")       or data.get("metros2"))
@@ -932,6 +991,8 @@ def normalize_payload(data: dict) -> dict:
         "tipo_camara": tipo_camara,
         "cantidad_camara": cantidad_camara,
         "area_vigilar": area_vigilar,
+        "alcance": alcance,
+
     }
 
     try:
@@ -1229,6 +1290,9 @@ def _compose_payload_from_vars(vars_, from_wa: str):
     else:
         servicio_label = subservicio or "Control de Plagas"
 
+    # Detectar alcance (interior/exterior/ambas) desde las variables del flujo
+    scope_detected = _scope_from_any(vars_)  # usa tus helpers ya definidos
+
     payload = {
         "servicio": servicio_label,
         "tipo_clientes": "Residencial",
@@ -1243,7 +1307,10 @@ def _compose_payload_from_vars(vars_, from_wa: str):
         "tipo_camara": tipo_camara,
         "cantidad_camara": cantidad_camara,
         "area_vigilar": area_vigilar,
-    }
+
+ # 🔴 NUEVO: pasar alcance al payload
+        "alcance": scope_detected,   # "interior" | "exterior" | "ambas" | ""
+        }
 
     if not payload.get("phone") and from_wa:
         payload["phone"] = from_wa.replace("whatsapp:", "")
