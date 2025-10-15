@@ -1166,15 +1166,15 @@ def webhook():
 
     vars_ = sess.get("vars", {})
 
-    if node.get("type") == "pregunta":
-        varname = node.get("variableName", "").strip()
-        if varname:
-            vars_[varname] = body
-        next_id = node.get("nextId")
-        sess["vars"] = vars_
-        sess["node_id"] = next_id
+if node.get("type") == "pregunta":
+    varname = node.get("variableName", "").strip()
+    if varname:
+        vars_[varname] = body
+    next_id = node.get("nextId")
+    sess["vars"] = vars_
+    sess["node_id"] = next_id
 
-    elif node.get("type") == "condicional":
+elif node.get("type") == "condicional":
     chosen = _try_pick_option(node, body)
     if not chosen:
         _send_menu(resp, node)
@@ -1185,18 +1185,15 @@ def webhook():
     if save_as:
         vars_[save_as] = chosen.get("text", "")
 
-    # === INICIO: Mensajes "desde" automáticos sin tocar el JSON ===
+    # === INICIO: Mensajes “desde” automáticos ===
     try:
         current_node_id = str(node.get("id") or "")
         sel_text = (chosen.get("text") or "").lower()
 
-        # 1) Cuando eligen el subservicio de plagas (desratización / desinsectación / sanitización)
-        #    Node IDs de tu JSON:
-        #    - 1748910215188 pregunta "¿En qué servicio de Control de Plagas?"
+        # 1) Cuando elige el tipo de plaga (desratización / desinsectación / sanitización)
         if current_node_id == "1748910215188":
-            # subservicio quedó guardado en vars_ por saveAs="subservicio"
             subserv_label = vars_.get("subservicio", "")
-            serv_key = _canon_servicio_para_precios(subserv_label)  # -> desratizacion/desinsectacion/desinfeccion
+            serv_key = _canon_servicio_para_precios(subserv_label)
             mk = precios_desde_por_servicio(serv_key)
             if mk:
                 resp.message(
@@ -1207,11 +1204,7 @@ def webhook():
                     "🔐 *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
                 )
 
-        # 2) Cuando eligen el alcance (interior / exterior / ambas) para plagas
-        #    Node IDs de tu JSON:
-        #    - 1748911338220 (desratización: interior/exterior/ambas)
-        #    - 1748912010712 (desinsectación: interior/exterior/ambas)
-        #    - 1748912322554 (sanitización: interior/exterior/ambas)
+        # 2) Cuando elige interior/exterior/ambas
         if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
             subserv_label = vars_.get("subservicio", "")
             serv_key = _canon_servicio_para_precios(subserv_label)
@@ -1230,23 +1223,23 @@ def webhook():
                 )
     except Exception as _e:
         app.logger.warning(f"[mk_desde] aviso no crítico: {_e}")
-
-    # === FIN: Mensajes "desde" automáticos ===
+    # === FIN: Mensajes “desde” automáticos ===
 
     sess["vars"] = vars_
     sess["node_id"] = chosen.get("nextId") or node.get("nextId")
 
+else:
+    sess["node_id"] = node.get("nextId")
 
-    else:
-        sess["node_id"] = node.get("nextId")
+# ⬇️ Estas líneas VAN FUERA del if/elif/else (al mismo nivel que el if)
+_flow_emit_until_input(resp, sess)
 
-    _flow_emit_until_input(resp, sess)
+if not sess.get("node_id"):
+    _flow_finish_and_generate(resp, form, sess)
 
-    if not sess.get("node_id"):
-        _flow_finish_and_generate(resp, form, sess)
+_sess_set(sess_id, sess)
+return str(resp), 200, {"Content-Type":"application/xml"}
 
-    _sess_set(sess_id, sess)
-    return str(resp), 200, {"Content-Type":"application/xml"}
 
 # -----------------------------------------------------------------------------
 @app.post("/reload-flow")
