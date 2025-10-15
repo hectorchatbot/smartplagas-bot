@@ -139,43 +139,50 @@ BASE_DESINSECTACION = [56_000, 71_250, 97_500, 120_000, 157_500, 247_500, 405_00
 
 # Diccionario de precios finales por servicio (sin cálculos posteriores)
 PRECIOS = {
-    # Desinsectación (base 100%)
-    "desinsectacion": BASE_DESINSECTACION,
+    # DESINSECTACIÓN (base y splits)
+    "desinsectacion":            BASE_DESINSECTACION,
+    "desinsectacion_interior":  [int(v * 0.6) for v in BASE_DESINSECTACION],
+    "desinsectacion_exterior":  [int(v * 0.4) for v in BASE_DESINSECTACION],
+    "desinsectacion_ambas":     [int(v * 1.0) for v in BASE_DESINSECTACION],
 
-    # Desratización con proporciones fijas respecto a la base de desinsectación:
-    # Interior = 0.6, Exterior = 0.4, Ambas = 1.0
-    "desratizacion_interior": [int(v * 0.6) for v in BASE_DESINSECTACION],
-    "desratizacion_exterior": [int(v * 0.4) for v in BASE_DESINSECTACION],
-    "desratizacion_ambas":    [int(v * 1.0) for v in BASE_DESINSECTACION],
+    # DESRATIZACIÓN (splits respecto a la misma base)
+    "desratizacion_interior":   [int(v * 0.6) for v in BASE_DESINSECTACION],
+    "desratizacion_exterior":   [int(v * 0.4) for v in BASE_DESINSECTACION],
+    "desratizacion_ambas":      [int(v * 1.0) for v in BASE_DESINSECTACION],
 }
 
-# Alias opcionales para mapear textos del flujo a las claves del dict anterior
+# Alias de texto que pueden venir del flujo/usuario
 SERVICE_ALIASES = {
-    "desinsectacion": "desinsectacion",
-    "desratizacion interior": "desratizacion_interior",
-    "desratizacion exterior": "desratizacion_exterior",
-    "desratizacion ambas":    "desratizacion_ambas",
-    "desratización interior": "desratizacion_interior",
-    "desratización exterior": "desratizacion_exterior",
-    "desratización ambas":    "desratizacion_ambas",
+    # desinsectación
+    "desinsectacion":              "desinsectacion",
+    "desinsectación":              "desinsectacion",
+    "desinsectacion interior":     "desinsectacion_interior",
+    "desinsectacion exterior":     "desinsectacion_exterior",
+    "desinsectacion ambas":        "desinsectacion_ambas",
+    "desinsectación interior":     "desinsectacion_interior",
+    "desinsectación exterior":     "desinsectacion_exterior",
+    "desinsectación ambas":        "desinsectacion_ambas",
+
+    # desratización
+    "desratizacion interior":      "desratizacion_interior",
+    "desratizacion exterior":      "desratizacion_exterior",
+    "desratizacion ambas":         "desratizacion_ambas",
+    "desratización interior":      "desratizacion_interior",
+    "desratización exterior":      "desratizacion_exterior",
+    "desratización ambas":         "desratizacion_ambas",
 }
 
 def tramo_index(m2: float) -> int:
-    """Devuelve el índice del tramo para un valor de m²."""
     for i, (a, b) in enumerate(TRAMOS):
         if a <= m2 <= b:
             return i
-    # Si por alguna razón no calza, usa el último tramo
     return len(TRAMOS) - 1
 
 def precio_servicio(servicio_key: str, m2: float) -> int:
-    """
-    Retorna el precio final del servicio según m².
-    Acepta tanto la clave directa como un alias en texto.
-    """
     key = SERVICE_ALIASES.get(servicio_key.lower().strip(), servicio_key)
     idx = tramo_index(float(m2))
     return PRECIOS[key][idx]
+
 
 TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
