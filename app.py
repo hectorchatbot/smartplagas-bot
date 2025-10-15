@@ -20,6 +20,11 @@ POOL_DEFAULT_DEPTH = float(os.getenv("POOL_DEFAULT_DEPTH", "1.4"))
 # Volumen mÃ­nimo asumido en piscinas cuando no hay m2/m3
 PISCINA_MIN_M3_DEFAULT = float(os.getenv("PISCINA_MIN_M3_DEFAULT", "30"))
 
+# --- Precios base configurables ---
+UNIT_PRICE_M2_DESINSECTACION = float(os.getenv("UNIT_PRICE_M2_DESINSECTACION", "650"))  # CLP/m²
+FACTOR_INTERIOR = 0.6
+FACTOR_EXTERIOR = 0.4
+
 # -----------------------------------------------------------------------------
 # App + CORS
 # -----------------------------------------------------------------------------
@@ -124,11 +129,54 @@ twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 # -----------------------------------------------------------------------------
 # Precios y utilidades
 # -----------------------------------------------------------------------------
-TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
+TRAMOS = [
+    (0, 50), (51, 100), (101, 200), (201, 300),
+    (301, 500), (501, 1000), (1001, 2000), (2001, 9_999_999)
+]
+
+# Base general de DESINSECTACIÓN por tramo (valores finales)
+BASE_DESINSECTACION = [56_000, 71_250, 97_500, 120_000, 157_500, 247_500, 405_000, 660_000]
+
+# Diccionario de precios finales por servicio (sin cálculos posteriores)
 PRECIOS = {
-    "desinsectacion":[56000,71250,97500,120000,157500,247500,405000,660000],
-    "desratizacion": [51000,66000,90000,112500,146250,225000,352500,562500],
-    "desinfeccion":  [42000,56000,77000,98000,126000,196000,308000,490000],
+    # Desinsectación (base 100%)
+    "desinsectacion": BASE_DESINSECTACION,
+
+    # Desratización con proporciones fijas respecto a la base de desinsectación:
+    # Interior = 0.6, Exterior = 0.4, Ambas = 1.0
+    "desratizacion_interior": [int(v * 0.6) for v in BASE_DESINSECTACION],
+    "desratizacion_exterior": [int(v * 0.4) for v in BASE_DESINSECTACION],
+    "desratizacion_ambas":    [int(v * 1.0) for v in BASE_DESINSECTACION],
+}
+
+# Alias opcionales para mapear textos del flujo a las claves del dict anterior
+SERVICE_ALIASES = {
+    "desinsectacion": "desinsectacion",
+    "desratizacion interior": "desratizacion_interior",
+    "desratizacion exterior": "desratizacion_exterior",
+    "desratizacion ambas":    "desratizacion_ambas",
+    "desratización interior": "desratizacion_interior",
+    "desratización exterior": "desratizacion_exterior",
+    "desratización ambas":    "desratizacion_ambas",
+}
+
+def tramo_index(m2: float) -> int:
+    """Devuelve el índice del tramo para un valor de m²."""
+    for i, (a, b) in enumerate(TRAMOS):
+        if a <= m2 <= b:
+            return i
+    # Si por alguna razón no calza, usa el último tramo
+    return len(TRAMOS) - 1
+
+def precio_servicio(servicio_key: str, m2: float) -> int:
+    """
+    Retorna el precio final del servicio según m².
+    Acepta tanto la clave directa como un alias en texto.
+    """
+    key = SERVICE_ALIASES.get(servicio_key.lower().strip(), servicio_key)
+    idx = tramo_index(float(m2))
+    return PRECIOS[key][idx]
+
 }
 TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
@@ -533,6 +581,43 @@ def precios_desde_por_servicio(serv_key: str) -> dict:
         "exterior": int(round(base * SPLIT_IE["exterior"])),
     }
 
+def _fmt_clp(n: float) -> str:
+    # Formato chileno simple: $97.500
+    try:
+        n = int(round(n))
+    except Exception:
+        pass
+    return f"${n:,}".replace(",", ".")
+
+def calcular_total_desinsectacion(m2: float, cobertura: str, unit_price: float = UNIT_PRICE_M2_DESINSECTACION):
+    """
+    cobertura: 'interior' | 'exterior' | 'ambas' (también acepta '1','2','3')
+    Retorna: dict con total y breakdown interior/exterior
+    """
+    c = (cobertura or "").strip().lower()
+    c = {"1": "interior", "2": "exterior", "3": "ambas"}.get(c, c)
+
+    if c == "interior":
+        sub_int = m2 * unit_price
+        sub_ext = 0.0
+    elif c == "exterior":
+        sub_int = 0.0
+        sub_ext = m2 * unit_price
+    else:  # ambas
+        sub_int = m2 * unit_price * FACTOR_INTERIOR
+        sub_ext = m2 * unit_price * FACTOR_EXTERIOR
+
+    total = sub_int + sub_ext
+    return {
+        "m2": m2,
+        "cobertura": c or "ambas",
+        "unit_price": unit_price,
+        "subtotal_interior": sub_int,
+        "subtotal_exterior": sub_ext,
+        "total": total,
+        "total_fmt": _fmt_clp(total),
+    }
+
 # -----------------------------------------------------------------------------
 # DOCX -> PDF
 # -----------------------------------------------------------------------------
@@ -741,6 +826,38 @@ def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
     if docx_url:
         sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"ðŸ–¹ DOCX: {docx_url}", delay=MEDIA_DELAY)
     return sids
+
+def aplicar_factor_control_plagas(base, tipo, scope):
+    """
+    base: total calculado por tramo (m2 * precio_unitario o como lo defina tu 'precio_por_tramo')
+    tipo: 'desinsectacion' | 'desratizacion' | ''
+    scope: 'interior' | 'exterior' | 'ambas' | '1' | '2' | '3'
+    Retorna SOLO el total. (Si luego quieres desglose, te digo cómo guardarlo en el contexto del PDF.)
+    """
+    s = (scope or "").strip().lower()
+    s = {"1": "interior", "2": "exterior", "3": "ambas"}.get(s, s or "ambas")
+
+    # Interior o exterior: 100% del base (sin split)
+    if s == "interior":
+        sub_int = float(base)
+        sub_ext = 0.0
+    elif s == "exterior":
+        sub_int = 0.0
+        sub_ext = float(base)
+    else:
+        # Ambas: split 60/40 del MISMO base
+        # Nota: sub_int + sub_ext == base (0.6 + 0.4 = 1.0)
+        sub_int = float(base) * FACTOR_INTERIOR  # 0.6
+        sub_ext = float(base) * FACTOR_EXTERIOR  # 0.4
+
+    total = sub_int + sub_ext
+
+    # Log útil para verificar que sí está aplicando 0.6 / 0.4
+    logging.info(
+        f"[plagas] tipo={tipo} scope={s} base={base} "
+        f"sub_int={sub_int} sub_ext={sub_ext} total={total}"
+    )
+    return total
 
 # -----------------------------------------------------------------------------
 # NormalizaciÃ³n de payload externo y generate
