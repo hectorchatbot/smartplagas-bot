@@ -1335,7 +1335,6 @@ def whoami():
 @app.route("/files/<path:filename>")
 def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
 
-from flask import Markup
 
 @app.route("/tramos", methods=["GET"])
 def tramos_html():
