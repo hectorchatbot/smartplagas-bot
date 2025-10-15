@@ -1,4 +1,4 @@
-"""A test runner for pywin32"""
+﻿"""A test runner for pywin32"""
 
 import os
 import site

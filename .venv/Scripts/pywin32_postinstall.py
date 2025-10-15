@@ -1,4 +1,4 @@
-# postinstall script for pywin32
+﻿# postinstall script for pywin32
 #
 # copies pywintypesXX.dll and pythoncomXX.dll into the system directory,
 # and creates a pth file

@@ -1,4 +1,4 @@
-from twilio.rest import Client
+﻿from twilio.rest import Client
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,10 +17,10 @@ def enviar_cotizacion_pdf():
         from_=from_whatsapp_number,
         to=numero_cliente,
         media_url=[url_pdf],
-        body="Hola 👋, adjuntamos la cotización solicitada. Puedes revisar el PDF. ¡Gracias por confiar en Smart Plagas!"
+        body="Hola ðŸ‘‹, adjuntamos la cotizaciÃ³n solicitada. Puedes revisar el PDF. Â¡Gracias por confiar en Smart Plagas!"
     )
 
-    print("✅ Cotización enviada por WhatsApp. SID:", message.sid)
+    print("âœ… CotizaciÃ³n enviada por WhatsApp. SID:", message.sid)
 
 if __name__ == "__main__":
     enviar_cotizacion_pdf()

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -474,17 +474,19 @@ def precio_total(info: dict) -> int:
             info["__m3_asumido_val__"] = m3
         return _precio_piscina_por_tramo(key, m3)
 
-            if dominio == "plagas":
-        tipo  = _tipo_servicio(info)
-        scope = _scope_from_any(info)
+    elif dominio == "plagas":
+        # SOLO plagas: aplicar factor 0.6/0.4/1.0 a desinsectación/desratización
+        tipo  = _tipo_servicio(info)               # 'desinsectacion' | 'desratizacion' | ''
+        scope = _scope_from_any(info)              # 'interior' | 'exterior' | 'ambas' | ''
         base  = precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
         total = aplicar_factor_control_plagas(base, tipo, scope)
         return int(total)
 
-
-    if dominio == "camaras":
+    elif dominio == "camaras":
         total, _, _, _, _ = calcular_total_camaras(
-            info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
+            info.get("tipo_camara",""),
+            info.get("area_vigilar",""),
+            info.get("cantidad_camara","")
         )
         return total
 

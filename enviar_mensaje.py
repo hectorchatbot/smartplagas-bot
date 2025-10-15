@@ -1,4 +1,4 @@
-import os
+﻿import os
 from twilio.rest import Client
 from dotenv import load_dotenv
 
@@ -16,6 +16,6 @@ def enviar_mensaje(numero_destino, texto):
         from_=from_whatsapp_number,
         to=f"whatsapp:{numero_destino}"
     )
-    print(f"✅ Mensaje enviado con SID: {message.sid}")
+    print(f"âœ… Mensaje enviado con SID: {message.sid}")
 
 

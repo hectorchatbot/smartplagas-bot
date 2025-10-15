@@ -1,0 +1,16 @@
+{
+    // Mostrar espacios y tabs
+    "editor.renderWhitespace": "all",
+    "editor.renderControlCharacters": true,
+    // Siempre usar espacios (no tabs) y tamaño 4
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "editor.detectIndentation": false,
+    // Formato y limpieza útiles
+    "editor.formatOnSave": true,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    // Codificación y fin de línea
+    "files.encoding": "utf8",
+    "files.eol": "\n"
+}
