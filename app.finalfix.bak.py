@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -9,7 +9,7 @@ from werkzeug.utils import secure_filename
 import redis
 
 # -----------------------------------------------------------------------------
-# Config básica / logging
+# Config bÃ¡sica / logging
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 load_dotenv(override=False)
@@ -17,7 +17,7 @@ APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", "dev-local")
 
 # Profundidad por defecto para piscinas (si el usuario no la entrega)
 POOL_DEFAULT_DEPTH = float(os.getenv("POOL_DEFAULT_DEPTH", "1.4"))
-# Volumen mínimo asumido en piscinas cuando no hay m2/m3
+# Volumen mÃ­nimo asumido en piscinas cuando no hay m2/m3
 PISCINA_MIN_M3_DEFAULT = float(os.getenv("PISCINA_MIN_M3_DEFAULT", "30"))
 
 # -----------------------------------------------------------------------------
@@ -110,10 +110,10 @@ TEMPLATE_DIRS = [
     os.path.join(BASE_DIR, "templates"),
     "/app/templates",
     "/templates",
-    FILES_DIR,  # por si se subió vía /upload
+    FILES_DIR,  # por si se subiÃ³ vÃ­a /upload
 ]
 
-# Envíos
+# EnvÃ­os
 SEND_PDF    = (os.getenv("SEND_PDF_TO_CLIENT", "true").lower() == "true")
 SEND_DOC    = (os.getenv("SEND_DOC_TO_CLIENT", "false").lower() == "true")
 MEDIA_DELAY = float(os.getenv("MEDIA_DELAY_SECONDS", "1.0"))
@@ -122,7 +122,7 @@ SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 
 # -----------------------------------------------------------------------------
-# Precios y utilidades
+# Precios y utilidades (SIN CAMBIOS en tramos y valores)
 # -----------------------------------------------------------------------------
 TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
 PRECIOS = {
@@ -145,160 +145,6 @@ CAM_PRECIOS = {
     "dvr":          {"interior":82500,"exterior":104500},
 }
 
-# =====================[ FACTORES Y HELPERS PLAGAS ]=====================
-FACTOR_INTERIOR = 0.6
-FACTOR_EXTERIOR = 0.4
-FACTOR_AMBAS    = 1.0
-
-def _tipo_servicio(vars_: dict) -> str:
-    """
-    Retorna 'desinsectacion', 'desratizacion' o '' detectando desde campos comunes.
-    Acepta claves: servicio_label, servicio_precio, servicio, tipo_servicio, categoria, service, tipo.
-    """
-    keys = ["servicio_precio", "servicio_label", "servicio", "tipo_servicio", "categoria", "service", "tipo"]
-    txt = ""
-    for k in keys:
-        txt = (vars_.get(k, "") or "").strip().lower()
-        if txt:
-            break
-    if any(w in txt for w in ["desinsect", "insect"]):
-        return "desinsectacion"
-    if any(w in txt for w in ["desrat", "roedor", "rat"]):
-        return "desratizacion"
-    return ""
-
-def _scope_from_vars(vars_: dict) -> str:
-    """
-    Devuelve 'interior', 'exterior' o 'ambas' según variables del flujo.
-    Acepta interior_exterior, area_tratamiento, tratamiento_area, zona, scope, alcance, area_plaga, interiorExterior.
-    """
-    keys = ["interior_exterior","area_tratamiento","tratamiento_area","zona","scope","alcance","area_plaga","interiorExterior"]
-    raw = ""
-    for k in keys:
-        raw = (vars_.get(k, "") or "").strip().lower()
-        if raw:
-            break
-    if any(w in raw for w in ["ambas","ambos","interior y exterior","interior & exterior","i/e","todo","completo"]):
-        return "ambas"
-    if "interior" in raw and "exterior" in raw:
-        return "ambas"
-    if "interior" in raw or raw == "i":
-        return "interior"
-    if "exterior" in raw or raw == "e":
-        return "exterior"
-    return ""
-
-def _scope_from_any(d: dict) -> str:
-    """
-    Fallback: intenta deducir el alcance desde cualquier campo/label visible.
-    """
-    s = _scope_from_vars(d)
-    if s:
-        return s
-    lbls = [
-        d.get("servicio_label",""), d.get("servicio",""),
-        d.get("subservicio",""), d.get("detalle",""), d.get("detalles","")
-    ]
-    raw = " ".join(x for x in lbls if x).lower()
-    if any(w in raw for w in ["interior y exterior","interior & exterior","ambas","ambos","completo"]):
-        return "ambas"
-    if "interior" in raw and "exterior" in raw:
-        return "ambas"
-    if "interior" in raw:
-        return "interior"
-    if "exterior" in raw:
-        return "exterior"
-    return ""
-
-def _metros_desde_vars(vars_: dict) -> float:
-    """
-    Obtiene m2 desde campos comunes.
-    """
-    keys = ["m2","metros2","metros_cuadrados","area_m2","superficie_m2","superficie"]
-    for k in keys:
-        v = vars_.get(k)
-        if v is None:
-            continue
-        try:
-            num = re.sub(r"[^\d.,-]", "", str(v)).replace(",", ".")
-            return max(0.0, float(num))
-        except:
-            continue
-    return 0.0
-
-def _factor_por_scope(scope: str) -> float:
-    if scope == "interior":
-        return FACTOR_INTERIOR
-    if scope == "exterior":
-        return FACTOR_EXTERIOR
-    if scope == "ambas":
-        return FACTOR_AMBAS
-    return FACTOR_AMBAS  # por defecto (total)
-
-def aplicar_factor_control_plagas(precio_tramo_base: float, tipo: str, scope: str) -> float:
-    """
-    Solo para 'desinsectacion' y 'desratizacion':
-      interior -> 0.6
-      exterior -> 0.4
-      ambas    -> 1.0
-    Otros servicios retornan el base sin cambios.
-    """
-    if tipo in ("desinsectacion","desratizacion"):
-        return round(precio_tramo_base * _factor_por_scope(scope), 0)
-    return precio_tramo_base
-
-def build_descripcion_pdf(tipo: str, m2: float, scope: str) -> str:
-    """
-    Descripción para PDF:
-    - Desinsectación: 🐜🕷️ Desinsectación — 150 m2 - interior|exterior|interior y exterior
-    - Desratización : Desratización — 150 m2 - interior|exterior|interior y exterior
-    - Otros         : Servicio de control de plagas — ...
-    """
-    m2_txt = f"{int(m2)} m2" if m2 and abs(m2 - int(m2)) < 0.01 else (f"{m2:g} m2" if m2 else "")
-    if scope == "ambas":
-        alcance = "interior y exterior"
-    elif scope in ("interior","exterior"):
-        alcance = scope
-    else:
-        alcance = ""
-
-    if tipo == "desinsectacion":
-        base = "🐜🕷️ Desinsectación"
-    elif tipo == "desratizacion":
-        base = "Desratización"
-    else:
-        base = "Servicio de control de plagas"
-
-    if m2_txt:
-        base += f" — {m2_txt}"
-    if alcance:
-        base += f" - {alcance}"
-    return base
-
-def build_etiqueta_servicio_tabla(tipo: str, m2: float, scope: str) -> str:
-    """
-    Mismo texto que la descripción pero SIN emojis (para la celda 'servicio' de la tabla).
-    """
-    m2_txt = f"{int(m2)} m2" if m2 and abs(m2 - int(m2)) < 0.01 else (f"{m2:g} m2" if m2 else "")
-    if scope == "ambas":
-        alcance = "interior y exterior"
-    elif scope in ("interior","exterior"):
-        alcance = scope
-    else:
-        alcance = ""
-
-    titulo = {
-        "desinsectacion": "Desinsectación",
-        "desratizacion":  "Desratización"
-    }.get(tipo, "Servicio de control de plagas")
-
-    txt = titulo
-    if m2_txt:
-        txt += f" — {m2_txt}"
-    if alcance:
-        txt += f" - {alcance}"
-    return txt
-
 def _fmt_money_clp(v:int)->str:
     try:
         return f"${int(v):,}".replace(",", ".")
@@ -314,7 +160,7 @@ def _descuento_por_cantidad(qty: int) -> float:
 def _infer_area_from_text(txt: str, tipo_camara: str) -> str:
     if (tipo_camara or "").lower().startswith("sola"): return "exterior"
     t = (txt or "").lower()
-    exterior_words = ("exterior","patio","jardin","jardín","porton","portón","entrada","estacionamiento","perimetro","perímetro","terraza","muro")
+    exterior_words = ("exterior","patio","jardin","jardÃ­n","porton","portÃ³n","entrada","estacionamiento","perimetro","perÃ­metro","terraza","muro")
     return "exterior" if any(w in t for w in exterior_words) else "interior"
 
 def _canon_tipo_camara(s: str) -> str:
@@ -328,7 +174,7 @@ def _cantidad_aproximada(opcion: str) -> int:
     t = (opcion or "").lower()
     if "1" in t and "2" in t: return 2
     if "3" in t and "5" in t: return 4
-    if "mas" in t or "más" in t or "5" in t: return 6
+    if "mas" in t or "mÃ¡s" in t or "5" in t: return 6
     m = re.search(r"\d+", t)
     return int(m.group(0)) if m else 1
 
@@ -367,9 +213,9 @@ def _canon_piscina_key(label: str) -> str:
 
 def _dominio_from_info(info: dict) -> str:
     """
-    Detección robusta del dominio:
-    - Piscinas si label mapea a una key de piscina o si hay campos típicos (tamaño, profundidad, m3).
-    - Cámaras si hay tipo/cantidad/área de cámaras.
+    DetecciÃ³n robusta del dominio:
+    - Piscinas si label mapea a una key de piscina o si hay campos tÃ­picos (tamaÃ±o, profundidad, m3).
+    - CÃ¡maras si hay tipo/cantidad/Ã¡rea de cÃ¡maras.
     - Plagas si texto contiene plaga/desratiz/desinsect/sanitiz.
     """
     label = info.get("servicio_label","")
@@ -397,11 +243,11 @@ def parse_pool_size_to_m2(size_text: str) -> float:
         return 0.0
     s = str(size_text).lower()
     s = s.replace("metros", "").replace("metro", "")
-    s = s.replace("m2", "").replace("m²", "").replace("mts", "").replace("mt", "").replace("m", "")
+    s = s.replace("m2", "").replace("mÂ²", "").replace("mts", "").replace("mt", "").replace("m", "")
     s = s.replace(",", ".").strip()
     s = s.replace("por", "x").replace("*", "x")
     s = re.sub(r"\s+", "", s)
-    m = re.match(r"^(\d+(?:\.\d+)?)[x×](\d+(?:\.\d+)?)$", s)
+    m = re.match(r"^(\d+(?:\.\d+)?)[xÃ—](\d+(?:\.\d+)?)$", s)
     if m:
         try:
             a = float(m.group(1)); b = float(m.group(2))
@@ -422,7 +268,7 @@ def precio_por_tramo(servicio_precio: str, m2: float) -> int:
     return int(tabla[-1])
 
 def _volumen_estimado_m3(info: dict) -> float:
-    # 1) explícito
+    # 1) explÃ­cito
     for k in ("m3","volumen","volumen_m3"):
         v = str(info.get(k, "") or "").strip()
         if v:
@@ -446,7 +292,7 @@ def _volumen_estimado_m3(info: dict) -> float:
 def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
     tabla = PRECIOS_PISCINA.get(serv_key)
     if not tabla: return 0
-    # Si el servicio es por m3 y no hay m3, aplicar m3 mínimo (fallback definitivo)
+    # Si el servicio es por m3 y no hay m3, aplicar m3 mÃ­nimo (fallback definitivo)
     if serv_key.endswith("_m3") and (m3 is None or m3 <= 0):
         m3 = PISCINA_MIN_M3_DEFAULT
     # seleccionar tramo
@@ -461,7 +307,6 @@ def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
 
 def precio_total(info: dict) -> int:
     dominio = _dominio_from_info(info)
-
     if dominio == "piscinas":
         label = info.get("servicio_label", "")
         override = (info.get("servicio_precio") or "").strip()
@@ -473,26 +318,13 @@ def precio_total(info: dict) -> int:
             info["__m3_asumido__"] = True
             info["__m3_asumido_val__"] = m3
         return _precio_piscina_por_tramo(key, m3)
-
     if dominio == "plagas":
-        # Detectar tipo (desinsectación / desratización) y alcance (interior / exterior / ambas)
-        tipo  = _tipo_servicio(info)         # 'desinsectacion' | 'desratizacion' | ''
-        scope = _scope_from_any(info)        # 'interior' | 'exterior' | 'ambas' | ''
-
-        # Precio base por TRAMO (según m2 y servicio_precio) — sin factor
-        base = precio_por_tramo(info.get("servicio_precio", ""), info.get("m2") or 0)
-
-        # Aplicar factores SOLO a desinsectación / desratización:
-        # interior=0.6, exterior=0.4, ambas=1.0 (total del tramo)
-        total = aplicar_factor_control_plagas(base, tipo, scope)
-        return int(total)
-
+        return precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
     if dominio == "camaras":
         total, _, _, _, _ = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
         return total
-
     return 0
 
 def _safe(x):
@@ -521,20 +353,22 @@ def build_urls(filename_docx: str, filename_pdf: str):
         return u
     return _bypass(docx_url), _bypass(pdf_url)
 
+
 # --- Marketing "desde" (interior/exterior/completo) con split 60/40 ---
 SPLIT_IE = {"interior": 0.60, "exterior": 0.40}
 
 def precios_desde_por_servicio(serv_key: str) -> dict:
-    """Retorna 'desde' usando el primer tramo (0-50 m²) y split 60/40."""
+    """Retorna 'desde' usando el primer tramo (0-50 mÂ²) y split 60/40."""
     tabla = PRECIOS.get(serv_key)
     if not tabla:
         return {}
-    base = int(tabla[0])  # tramo 0-50 m² como "desde"
+    base = int(tabla[0])  # tramo 0-50 mÂ² como "desde"
     return {
         "completo": base,
         "interior": int(round(base * SPLIT_IE["interior"])),
         "exterior": int(round(base * SPLIT_IE["exterior"])),
     }
+
 
 # -----------------------------------------------------------------------------
 # DOCX -> PDF
@@ -558,7 +392,7 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
     outdir = os.path.dirname(pdf_path)
     bin_lo = _lo_bin()
     if not bin_lo:
-        raise RuntimeError("LibreOffice no está disponible en el contenedor.")
+        raise RuntimeError("LibreOffice no estÃ¡ disponible en el contenedor.")
     cmd = [bin_lo, "--headless", "--convert-to", "pdf", "--outdir", outdir, docx_path]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     base_pdf = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
@@ -566,7 +400,7 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
     if os.path.exists(generated) and generated != pdf_path:
         os.replace(generated, pdf_path)
     if not os.path.exists(pdf_path):
-        raise RuntimeError("LibreOffice no generó el PDF")
+        raise RuntimeError("LibreOffice no generÃ³ el PDF")
 
 def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     if os.name == "nt" and docx2pdf_convert is not None:
@@ -585,7 +419,7 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
 
 # -----------------------------------------------------------------------------
-# Selección de plantilla + Render DOCX
+# SelecciÃ³n de plantilla + Render DOCX
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
     dom = _dominio_from_info(info) or "otro"
@@ -624,7 +458,7 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
 
     dom = _dominio_from_info(info)
 
-    # Calcula total inicial con lógica robusta (para setear __m3_asumido__ si aplica)
+    # Calcula total inicial con lÃ³gica robusta (para setear __m3_asumido__ si aplica)
     total_int = precio_total(info)
 
     ctx = {
@@ -646,41 +480,17 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         "clausula_seremi": "",
     }
 
-        if dom == "plagas":
-        # m2 (como número y texto bonito)
+    if dom == "plagas":
         try:
             m2_val = float(info.get("m2", 0))
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_val = _metros_desde_vars(info)
-            m2_txt = str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else "")
-
-        # tipo + alcance
-        tipo  = _tipo_servicio(info)          # 'desinsectacion' | 'desratizacion' | ''
-        scope = _scope_from_any(info)         # 'interior' | 'exterior' | 'ambas' | ''
-
-        # Descripción para PDF (con 🐜🕷️ en desinsectación) y etiqueta para celda 'servicio' (sin emojis)
-        desc_pdf = build_descripcion_pdf(tipo, m2_val, scope)
-        etiqueta = build_etiqueta_servicio_tabla(tipo, m2_val, scope)
-
-        # Total ya calculado arriba; aquí solo formateamos
-        total_int = precio_total(info)
-
-        # Poblar contexto a la plantilla
-        ctx["m2"]             = m2_txt
-        ctx["linea_servicio"] = etiqueta          # celda 'servicio' en tabla
-        ctx["linea_medida"]   = m2_txt if m2_txt else "1"
-        ctx["linea_total"]    = _fmt_money_clp(total_int)
-        ctx["precio"]         = _fmt_money_clp(total_int)
-        ctx["total"]          = _fmt_money_clp(total_int)
-        ctx["descripcion"]    = desc_pdf
-
-        # Clausula SEREMI: SOLO para desratización (optativo; si no quieres agregarla, deja vacío)
-        if tipo == "desratizacion":
-            ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
-        else:
-            ctx["clausula_seremi"] = ""
-
+            m2_txt = str(info.get("m2", "")) or ""
+        ctx["m2"] = m2_txt
+        ctx["linea_servicio"] = info["servicio_label"]
+        ctx["linea_medida"] = m2_txt if m2_txt else "1"
+        ctx["descripcion"] = f"{info['servicio_label']}" + (f" â€” {m2_txt} mÂ²" if m2_txt else "")
+        ctx["clausula_seremi"] = " â€” con instalaciÃ³n de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
         # Valores base
@@ -689,7 +499,15 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         except Exception:
             m2_val = 0.0
 
-        # m³ (con fallback garantizado para servicios _m3)
+        prof_raw = info.get("profundidad")
+        prof_val = None
+        if prof_raw not in (None, ""):
+            try:
+                prof_val = float(str(prof_raw).replace(",", "."))
+            except Exception:
+                prof_val = None
+
+        # mÂ³ (con fallback garantizado para servicios _m3)
         label = info.get("servicio_label", "")
         key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
         m3_val = _volumen_estimado_m3(info)
@@ -706,15 +524,19 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
 
         m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
         m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
-        ctx["m2"] = m2_txt
-        ctx["m3"] = m3_txt
-        ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"] = m3_txt if m3_txt else (m2_txt if m2_txt else "1")
+Trueelse:
+True    sess["node_id"] = node.get("nextId")
+
+True# -------------------- CONTINUACIÓN DEL FLUJO --------------------
+True_flow_emit_until_input(resp, sess)
+
+Trueif not sess.get("node_id"):
+True    _flow_finish_and_generate(resp, form, sess)
+
+True_sess_set(sess_id, sess)
+Truereturn str(resp), 200, {"Content-Type": "application/xml"}
         ctx["descripcion"] = info["servicio_label"]
         ctx["clausula_seremi"] = ""
-
-    else:
-        ctx["descripcion"] = info["servicio_label"]
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
@@ -753,15 +575,15 @@ def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
         return {"warn": "admin_or_twilio_not_configured"}
     sids = {}
     if resumen_texto:
-        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "🧾 *Nueva cotización*\n\n" + resumen_texto, delay=0.0)
+        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "ðŸ§¾ *Nueva cotizaciÃ³n*\n\n" + resumen_texto, delay=0.0)
     if pdf_url:
-        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📄 PDF de la cotización", pdf_url, delay=MEDIA_DELAY)
+        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "ðŸ“Ž PDF de la cotizaciÃ³n", pdf_url, delay=MEDIA_DELAY)
     if docx_url:
-        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"🖹 DOCX: {docx_url}", delay=MEDIA_DELAY)
+        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"ðŸ“„ DOCX: {docx_url}", delay=MEDIA_DELAY)
     return sids
 
 # -----------------------------------------------------------------------------
-# Normalización de payload externo y generate
+# NormalizaciÃ³n de payload externo y generate
 # -----------------------------------------------------------------------------
 def normalize_payload(data: dict) -> dict:
     data = data or {}
@@ -776,17 +598,17 @@ def normalize_payload(data: dict) -> dict:
     email     = _safe(data.get("correoelect")     or data.get("email"))
 
     profundidad    = _safe(data.get("profundidad"))
-    tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaño_piscina"))
+    tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaÃ±o_piscina"))
     m3_explicit    = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
 
-    # cámaras:
+    # cÃ¡maras:
     tipo_camara     = _safe(data.get("tipo_camara"))
     cantidad_camara = _safe(data.get("cantidad_camara"))
     area_vigilar    = _safe(data.get("area_vigilar"))
 
     # m2 declarado
     try:
-        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
+        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("mÂ²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
 
@@ -805,7 +627,7 @@ def normalize_payload(data: dict) -> dict:
         elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
         elif digits:                  to_wa = f"whatsapp:+{digits}"
 
-    servicio_label  = servicio or "Desinsectación"
+    servicio_label  = servicio or "DesinsectaciÃ³n"
     servicio_precio = _canon_servicio_para_precios(servicio_label)
 
     info = {
@@ -822,7 +644,7 @@ def normalize_payload(data: dict) -> dict:
         "to_whatsapp": to_wa,
         "profundidad": profundidad,
         "tamano_piscina": tamano_piscina,
-        # cámaras:
+        # cÃ¡maras:
         "tipo_camara": tipo_camara,
         "cantidad_camara": cantidad_camara,
         "area_vigilar": area_vigilar,
@@ -856,11 +678,11 @@ def handle_generate():
 
     # Si es piscina detectada por estructura/texto, asegurar prefijo claro
     if _dominio_from_info(info) == "piscinas" and "piscin" not in _norm(info.get("servicio_label","")):
-        info["servicio_label"] = f"Piscinas – {info.get('servicio_label','')}"
+        info["servicio_label"] = f"Piscinas â€“ {info.get('servicio_label','')}"
 
     faltantes = [k for k in ("servicio_label","cliente","direccion","contacto") if not info.get(k)]
     if faltantes:
-        return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
+        return jsonify(ok=True, message="Campos mÃ­nimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
 
     if (docx2pdf_convert is None) and (not _lo_bin()):
@@ -898,24 +720,24 @@ def handle_generate():
         vol = _volumen_estimado_m3(info)
         if vol <= 0:
             vol = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
-            medidas_line = f"*Volumen (asumido):* {vol} m³\n"
+            medidas_line = f"*Volumen (asumido):* {vol} mÂ³\n"
         else:
-            medidas_line = f"*Volumen:* {vol} m³\n"
+            medidas_line = f"*Volumen:* {vol} mÂ³\n"
     elif dominio == "plagas":
-        medidas_line = f"*Superficie tratada:* {info.get('m2',0)} m²\n"
+        medidas_line = f"*Superficie tratada:* {info.get('m2',0)} mÂ²\n"
     elif dominio == "camaras":
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
-        detalle_line = f"*Cámaras:* {info.get('tipo_camara','')} ({area}) x {qty} — unit: {_fmt_money_clp(unit_ap)}\n"
+        detalle_line = f"*CÃ¡maras:* {info.get('tipo_camara','')} ({area}) x {qty} â€” unit: {_fmt_money_clp(unit_ap)}\n"
 
     partes = [
-        "✅ *Nueva solicitud recibida*\n",
+        "âœ… *Nueva solicitud recibida*\n",
         f"*Servicio:* {info['servicio_label']}\n",
         detalle_line,
         f"*Cliente:* {info['cliente']}\n",
         medidas_line,
-        f"*Ubicación:* {info['direccion']}\n",
+        f"*UbicaciÃ³n:* {info['direccion']}\n",
     ]
     if info.get("comuna"): partes.append(f"*Comuna:* {info['comuna']}\n")
     partes.extend([f"*Detalles:* {info.get('detalles','')}\n",
@@ -924,9 +746,9 @@ def handle_generate():
 
     sids = {}
     if info.get("to_whatsapp") and SEND_PDF:
-        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📄 Cotización adjunta", pdf_url, MEDIA_DELAY)
+        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "ðŸ“Ž CotizaciÃ³n adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
-            send_whatsapp_text(info["to_whatsapp"], f"🖹 DOCX: {docx_url}", delay=MEDIA_DELAY)
+            send_whatsapp_text(info["to_whatsapp"], f"ðŸ“„ DOCX: {docx_url}", delay=MEDIA_DELAY)
 
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
@@ -959,7 +781,7 @@ def _parse_kv_text(msg: str) -> dict:
             "telefono": "telefono", "tel": "telefono", "fono": "fono", "phone": "phone",
             "correo": "email", "mail": "email", "e-mail": "email",
             "metros2": "m2", "metro_2": "m2",
-            "tamano_piscina": "tamano_piscina", "tamaño_piscina": "tamano_piscina",
+            "tamano_piscina": "tamano_piscina", "tamaÃ±o_piscina": "tamano_piscina",
             "servicioinicial": "servicio", "servicio_inicial": "servicio",
         }
         out[aliases.get(k, k)] = v
@@ -975,14 +797,14 @@ def _flow_reset():
 
 def _prompt_for(step: str) -> str:
     prompts = {
-        "servicio":  "¿Qué servicio necesitas? (ej: *Piscinas - Plan Intermedio*, *Desratización*, *Cámaras - Inalámbricas*)",
-        "m2":        "¿Cuál es la *superficie en m²*? (ej: 56)",
-        "profundidad":"Para piscinas, ¿profundidad en *metros*? (ej: 1.4). Escribe *omitir* si no aplica.",
-        "direccion": "¿Dirección exacta?",
-        "comuna":    "¿Comuna?",
-        "contacto":  "¿Nombre de contacto?",
-        "email":     "¿Email de contacto?",
-        "telefono":  "¿Teléfono (con código país, ej: +569xxxxxxxx)?",
+        "servicio":  "Â¿QuÃ© servicio necesitas? (ej: *Piscinas - Plan Intermedio*, *DesratizaciÃ³n*, *CÃ¡maras - InalÃ¡mbricas*)",
+        "m2":        "Â¿CuÃ¡l es la *superficie en mÂ²*? (ej: 56)",
+        "profundidad":"Para piscinas, Â¿profundidad en *metros*? (ej: 1.4). Escribe *omitir* si no aplica.",
+        "direccion": "Â¿DirecciÃ³n exacta?",
+        "comuna":    "Â¿Comuna?",
+        "contacto":  "Â¿Nombre de contacto?",
+        "email":     "Â¿Email de contacto?",
+        "telefono":  "Â¿TelÃ©fono (con cÃ³digo paÃ­s, ej: +569xxxxxxxx)?",
     }
     return prompts.get(step, "OK")
 
@@ -999,8 +821,89 @@ def _complete(info: dict) -> bool:
     return True
 
 # -----------------------------------------------------------------------------
-# FLUJO
+# Rutas bÃ¡sicas
 # -----------------------------------------------------------------------------
+@app.get("/")
+@app.get("/redis-ping")
+def redis_ping():
+    if not _r: return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
+    try: return jsonify(ok=True, pong=_r.ping()), 200
+    except Exception as e: return jsonify(ok=False, error=str(e)), 500
+
+@app.get("/health")
+def health():
+    try:
+        tdir = os.path.join(BASE_DIR, "templates")
+        odir = FILES_DIR
+        t_listing = sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []
+        o_listing = sorted(os.listdir(odir)) if os.path.isdir(odir) else []
+    except Exception as e:
+        t_listing, o_listing = [f"error: {e}"], []
+
+    lo_ok = bool(_lo_bin())
+    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
+    return jsonify({
+        "ok": True,
+        "service": "smartplagas-bot",
+        "time": datetime.datetime.utcnow().isoformat()+"Z",
+        "base_url": public_base_from_request(),
+        "templates_dirs": TEMPLATE_DIRS,
+        "out_dir": odir,
+        "templates_listing_main": t_listing,
+        "out_listing": o_listing,
+        "pdf_engine": engine,
+    }), 200
+
+@app.get("/whoami")
+def whoami():
+    return jsonify({
+        "app": "smartplagas-bot",
+        "version": APP_VERSION,
+        "routes": ["/", "/whoami", "/health", "/generate", "/upload", "/files/<name>", "/webhook", "/reload-flow"]
+    }), 200
+
+@app.route("/files/<path:filename>")
+def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
+
+# -----------------------------------------------------------------------------
+# /generate (REST)
+# -----------------------------------------------------------------------------
+@app.post("/generate")
+def generate(): return handle_generate()
+
+# -----------------------------------------------------------------------------
+# /upload Ãºnico (con token)
+# -----------------------------------------------------------------------------
+UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
+
+@app.route("/upload", methods=["POST", "OPTIONS"])
+def upload_pdf():
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not token:
+        token = request.headers.get("X-Upload-Token", "").strip()
+    if not UPLOAD_TOKEN or token != UPLOAD_TOKEN:
+        return jsonify(ok=False, error="unauthorized"), 401
+
+    f = request.files.get("file") or request.files.get("pdf") or request.files.get("document")
+    if not f or not f.filename:
+        return jsonify(ok=False, error="missing file"), 400
+
+    os.makedirs(FILES_DIR, exist_ok=True)
+    safe_name = secure_filename(f.filename or "archivo.pdf")
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"{ts}_{safe_name}"
+    out_path = os.path.join(FILES_DIR, out_name)
+    f.save(out_path)
+
+    public = public_base_from_request().rstrip("/")
+    url = f"{public}/files/{out_name}"
+    return jsonify(ok=True, url=url, saved=out_name), 200
+
+# =====================[ FLUJO: chatbot-flujo.json ]=====================
+
 FLOW_JSON_PATH = os.getenv("FLOW_JSON_PATH", os.path.join(BASE_DIR, "chatbot-flujo.json"))
 
 def _flow_load():
@@ -1095,7 +998,7 @@ def _map_rango_m2_to_number(rango: str) -> int:
     s = rango.lower()
     if "menos" in s or "<" in s or ("100" in s and "200" not in s): return 90
     if "100" in s and "200" in s: return 150
-    if "200" in s or "más" in s or ">" in s: return 250
+    if "200" in s or "mÃ¡s" in s or "mas" in s or ">" in s: return 250
     return 0
 
 def _compose_payload_from_vars(vars_, from_wa: str):
@@ -1117,9 +1020,9 @@ def _compose_payload_from_vars(vars_, from_wa: str):
 
     # Etiqueta visible del servicio
     if "piscin" in (servicio or "").lower():
-        servicio_label = f"Piscinas – {subservicio or 'Servicio'}"
-    elif "cámara" in (servicio or "").lower() or "camara" in (servicio or "").lower():
-        servicio_label = f"Cámaras – {subservicio or 'Servicio'}"
+        servicio_label = f"Piscinas â€“ {subservicio or 'Servicio'}"
+    elif "cÃ¡mara" in (servicio or "").lower() or "camara" in (servicio or "").lower():
+        servicio_label = f"CÃ¡maras â€“ {subservicio or 'Servicio'}"
     else:
         servicio_label = subservicio or "Control de Plagas"
 
@@ -1151,12 +1054,12 @@ def _flow_finish_and_generate(resp, form, sess):
 
     info = normalize_payload(payload)
 
-    # Seguridad extra: prefijo “Piscinas – …” si aplica
+    # Seguridad extra: prefijo â€œPiscinas â€“ â€¦â€ si aplica
     if _dominio_from_info(info) == "piscinas" and "piscin" not in _norm(info.get("servicio_label","")):
-        info["servicio_label"] = f"Piscinas – {info.get('servicio_label','')}"
+        info["servicio_label"] = f"Piscinas â€“ {info.get('servicio_label','')}"
 
     if (docx2pdf_convert is None) and (not _lo_bin()):
-        resp.message("⚠️ No pude generar PDF por un problema interno de conversión. Intentaremos de nuevo pronto.")
+        resp.message("âš ï¸ No pude generar PDF por un problema interno de conversiÃ³n. Intentaremos de nuevo pronto.")
         return
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1168,9 +1071,9 @@ def _flow_finish_and_generate(resp, form, sess):
     try:
         tpl_used = generar_docx_desde_plantilla(docx_path, info)
         convertir_docx_a_pdf(docx_path, pdf_path)
-    except Exception:
+    except Exception as e:
         app.logger.exception("gen-fail")
-        resp.message("⚠️ No pude generar la cotización. Intenta nuevamente.")
+        resp.message("âš ï¸ No pude generar la cotizaciÃ³n. Intenta nuevamente.")
         return
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
@@ -1178,10 +1081,10 @@ def _flow_finish_and_generate(resp, form, sess):
     total = _fmt_money_clp(total_int)
 
     resumen = (
-        "✅ Cotización lista\n"
-        f"• Servicio: {info.get('servicio_label','')}\n"
-        f"• Total: {total}\n"
-        f"• PDF: {pdf_url}"
+        "âœ… CotizaciÃ³n lista\n"
+        f"â€¢ Servicio: {info.get('servicio_label','')}\n"
+        f"â€¢ Total: {total}\n"
+        f"â€¢ PDF: {pdf_url}"
     )
     try:
         if twilio and TWILIO_ENABLED and from_wa:
@@ -1205,7 +1108,6 @@ def webhook():
     body_lc = body.lower()
     msg_sid = (form.get("MessageSid") or "").strip()
 
-    # Deduplicar
     if not _dedup_should_process(msg_sid):
         return str(MessagingResponse()), 200, {"Content-Type": "application/xml"}
 
@@ -1213,7 +1115,7 @@ def webhook():
     sess_id = _sess_key(form) or "anon"
     sess = _sess_get(sess_id) or {"node_id": _flow_start_id(), "vars": {}}
 
-    # Reinicio rápido del flujo
+    # Reinicio rÃ¡pido del flujo
     if body_lc in {"reiniciar", "reset", "start", "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}:
         sess = {"node_id": _flow_start_id(), "vars": {}}
         _flow_emit_until_input(resp, sess)
@@ -1222,13 +1124,13 @@ def webhook():
 
     # Si no hay flujo cargado
     if not _FLOW or not sess.get("node_id"):
-        resp.message("🤖 Endpoint activo. Usa /generate (POST JSON) para cotizar por REST.")
+        resp.message("ðŸ¤– Endpoint activo. Usa /generate (POST JSON) para cotizar por REST.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
     current_id = sess.get("node_id")
     node = _FLOW.get(current_id)
 
-    # Nodo inválido → reinicia
+    # Nodo invÃ¡lido â†’ reinicia
     if not node:
         sess = {"node_id": _flow_start_id(), "vars": {}}
         _flow_emit_until_input(resp, sess)
@@ -1238,14 +1140,15 @@ def webhook():
     vars_ = sess.get("vars", {})
 
     # -------------------- PROCESA EL NODO --------------------
-    if node.get("type") == "pregunta":
-        varname = (node.get("variableName") or "").strip()
+if node.get("type") == "pregunta":
+        varname = node.get("variableName", "").strip()
         if varname:
             vars_[varname] = body
+        next_id = node.get("nextId")
         sess["vars"] = vars_
-        sess["node_id"] = node.get("nextId")
+        sess["node_id"] = next_id
 
-    elif node.get("type") == "condicional":
+elif node.get("type") == "condicional":
         chosen = _try_pick_option(node, body)
         if not chosen:
             _send_menu(resp, node)
@@ -1256,44 +1159,45 @@ def webhook():
         if save_as:
             vars_[save_as] = chosen.get("text", "")
 
-        # Mensajes “desde” automáticos (split 60/40 interior/exterior)
+        # === INICIO: Mensajes “desde” automáticos ===
         try:
             current_node_id = str(node.get("id") or "")
             sel_text = (chosen.get("text") or "").lower()
 
-            # Tipo de plaga
+            # 1) Tipo de plaga (desratización / desinsectación / sanitización)
             if current_node_id == "1748910215188":
                 subserv_label = vars_.get("subservicio", "")
                 serv_key = _canon_servicio_para_precios(subserv_label)
                 mk = precios_desde_por_servicio(serv_key)
                 if mk:
                     resp.message(
-                        "Precios desde (referencia):\n"
-                        f"- Interior: {_fmt_money_clp(mk['interior'])}\n"
-                        f"- Exterior: {_fmt_money_clp(mk['exterior'])}\n"
-                        f"- Completo: {_fmt_money_clp(mk['completo'])}\n"
-                        "Normativa: DS 594 - SEREMI - Informe sanitario."
+                        "?? *Precios “desde” (referencia)*\n"
+                        f"• Interior: {_fmt_money_clp(mk['interior'])}\n"
+                        f"• Exterior: {_fmt_money_clp(mk['exterior'])}\n"
+                        f"• Completo: {_fmt_money_clp(mk['completo'])}\n"
+                        "?? *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
                     )
 
-            # Interior/Exterior/Ambas
+            # 2) Interior/Exterior/Ambas
             if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
                 subserv_label = vars_.get("subservicio", "")
                 serv_key = _canon_servicio_para_precios(subserv_label)
                 mk = precios_desde_por_servicio(serv_key)
                 if mk:
                     if "interior" in sel_text:
-                        val = mk["interior"]; etq = "Interior"
+                        val = mk["interior"]; etiqueta = "Interior"
                     elif "exterior" in sel_text:
-                        val = mk["exterior"]; etq = "Exterior"
+                        val = mk["exterior"]; etiqueta = "Exterior"
                     else:
-                        val = mk["completo"]; etq = "Completo (interior + exterior)"
+                        val = mk["completo"]; etiqueta = "Completo (interior + exterior)"
                     resp.message(
-                        f"{etq} desde {_fmt_money_clp(val)}.\n"
-                        "El valor final se ajusta según m² y complejidad.\n"
-                        "Normativa: DS 594 - SEREMI - Informe sanitario."
+                        f"?? {etiqueta} *desde* {_fmt_money_clp(val)}.\n"
+                        "?? El valor final se ajusta según m² y complejidad.\n"
+                        "?? *Normativa:* DS N° 594 — Productos ISP — Metodología autorizada SEREMI — Informe sanitario MINSAL."
                     )
-        except Exception as e2:
-            app.logger.warning(f"[mk_desde] {e2}")
+        except Exception as _e:
+            app.logger.warning(f"[mk_desde] aviso no crítico: {_e}")
+        # === FIN: Mensajes “desde” automáticos ===
 
         sess["vars"] = vars_
         sess["node_id"] = chosen.get("nextId") or node.get("nextId")
@@ -1309,184 +1213,169 @@ def webhook():
 
     _sess_set(sess_id, sess)
     return str(resp), 200, {"Content-Type": "application/xml"}
+                        "ðŸ’¸ *Precios â€œdesdeâ€ (referencia)*\n"
+                        f"â€¢ Interior: {_fmt_money_clp(mk['interior'])}\n"
+                        f"â€¢ Exterior: {_fmt_money_clp(mk['exterior'])}\n"
+                        f"â€¢ Completo: {_fmt_money_clp(mk['completo'])}\n"
+                        "ðŸ” *Normativa:* DS NÂ° 594 â€” Productos ISP â€” MetodologÃ­a autorizada SEREMI â€” Informe sanitario MINSAL."
+                    )
 
-# -----------------------------------------------------------------------------
-@app.get("/")
-@app.get("/redis-ping")
-def redis_ping():
-    if not _r: return jsonify(ok=False, error="redis_disabled_or_unconfigured"), 503
-    try: return jsonify(ok=True, pong=_r.ping()), 200
-    except Exception as e: return jsonify(ok=False, error=str(e)), 500
+            # 2) Cuando elige interior/exterior/ambas
+            if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
+                subserv_label = vars_.get("subservicio", "")
+                serv_key = _canon_servicio_para_precios(subserv_label)
+                mk = precios_desde_por_servicio(serv_key)
+                if mk:
+                    if "interior" in sel_text:
+                        val = mk["interior"]; etiqueta = "Interior"
+                    elif "exterior" in sel_text:
+                        val = mk["exterior"]; etiqueta = "Exterior"
+                    else:
+                        val = mk["completo"]; etiqueta = "Completo (interior + exterior)"
+                    resp.message(
+                        f"ðŸ’¡ {etiqueta} *desde* {_fmt_money_clp(val)}.\n"
+                        "ðŸ“ El valor final se ajusta segÃºn mÂ² y complejidad.\n"
+                        "ðŸ” *Normativa:* DS NÂ° 594 â€” Productos ISP â€” MetodologÃ­a autorizada SEREMI â€” Informe sanitario MINSAL."
+                    )
+        except Exception as _e:
+            app.logger.warning(f"[mk_desde] aviso no crÃ­tico: {_e}")
+        # === FIN: Mensajes â€œdesdeâ€ automÃ¡ticos ===
 
-@app.get("/health")
-def health():
+        sess["vars"] = vars_
+        sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+
+    else:
+        sess["node_id"] = node.get("nextId")
+
+    # -------------------- CONTINUACIÃ“N DEL FLUJO --------------------
+    _flow_emit_until_input(resp, sess)
+
+    if not sess.get("node_id"):
+        _flow_finish_and_generate(resp, form, sess)
+
+    _sess_set(sess_id, sess)
+    return str(resp), 200, {"Content-Type": "application/xml"}
+
+
+
+        save_as = chosen.get("saveAs")
+        if save_as:
+            vars_[save_as] = chosen.get("text", "")
+
+        # === INICIO: Mensajes â€œdesdeâ€ automÃ¡ticos ===
+        try:
+            current_node_id = str(node.get("id") or "")
+            sel_text = (chosen.get("text") or "").lower()
+
+            # 1) Cuando elige el tipo de plaga (desratizaciÃ³n / desinsectaciÃ³n / sanitizaciÃ³n)
+            if current_node_id == "1748910215188":
+                subserv_label = vars_.get("subservicio", "")
+                serv_key = _canon_servicio_para_precios(subserv_label)
+                mk = precios_desde_por_servicio(serv_key)
+                if mk:
+                    resp.message(
+                        "ðŸ’¸ *Precios â€œdesdeâ€ (referencia)*\n"
+                        f"â€¢ Interior: {_fmt_money_clp(mk['interior'])}\n"
+                        f"â€¢ Exterior: {_fmt_money_clp(mk['exterior'])}\n"
+                        f"â€¢ Completo: {_fmt_money_clp(mk['completo'])}\n"
+                        "ðŸ” *Normativa:* DS NÂ° 594 â€” Productos ISP â€” MetodologÃ­a autorizada SEREMI â€” Informe sanitario MINSAL."
+                    )
+
+            # 2) Cuando elige interior/exterior/ambas
+            if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
+                subserv_label = vars_.get("subservicio", "")
+                serv_key = _canon_servicio_para_precios(subserv_label)
+                mk = precios_desde_por_servicio(serv_key)
+                if mk:
+                    if "interior" in sel_text:
+                        val = mk["interior"]; etiqueta = "Interior"
+                    elif "exterior" in sel_text:
+                        val = mk["exterior"]; etiqueta = "Exterior"
+                    else:
+                        val = mk["completo"]; etiqueta = "Completo (interior + exterior)"
+                    resp.message(
+                        f"ðŸ’¡ {etiqueta} *desde* {_fmt_money_clp(val)}.\n"
+                        "ðŸ“ El valor final se ajusta segÃºn mÂ² y complejidad.\n"
+                        "ðŸ” *Normativa:* DS NÂ° 594 â€” Productos ISP â€” MetodologÃ­a autorizada SEREMI â€” Informe sanitario MINSAL."
+                    )
+        except Exception as _e:
+            app.logger.warning(f"[mk_desde] aviso no crÃ­tico: {_e}")
+        # === FIN: Mensajes â€œdesdeâ€ automÃ¡ticos ===
+
+        sess["vars"] = vars_
+        sess["node_id"] = chosen.get("nextId") or node.get("nextId")
+
+    else:
+        sess["node_id"] = node.get("nextId")
+
+    # -------------------- CONTINUACIÃ“N DEL FLUJO --------------------
+    _flow_emit_until_input(resp, sess)
+
+    if not sess.get("node_id"):
+        _flow_finish_and_generate(resp, form, sess)
+
+    _sess_set(sess_id, sess)
+    return str(resp), 200, {"Content-Type":"application/xml"}
+
+    save_as = chosen.get("saveAs")
+    if save_as:
+        vars_[save_as] = chosen.get("text", "")
+
+    # === INICIO: Mensajes â€œdesdeâ€ automÃ¡ticos ===
     try:
-        tdir = os.path.join(BASE_DIR, "templates")
-        odir = FILES_DIR
-        t_listing = sorted(os.listdir(tdir)) if os.path.isdir(tdir) else []
-        o_listing = sorted(os.listdir(odir)) if os.path.isdir(odir) else []
-    except Exception as e:
-        t_listing, o_listing = [f"error: {e}"], []
+        current_node_id = str(node.get("id") or "")
+        sel_text = (chosen.get("text") or "").lower()
 
-    lo_ok = bool(_lo_bin())
-    engine = "docx2pdf" if docx2pdf_convert is not None else ("libreoffice" if lo_ok else "none")
-    return jsonify({
-        "ok": True,
-        "service": "smartplagas-bot",
-        "time": datetime.datetime.utcnow().isoformat()+"Z",
-        "base_url": public_base_from_request(),
-        "templates_dirs": TEMPLATE_DIRS,
-        "out_dir": odir,
-        "templates_listing_main": t_listing,
-        "out_listing": o_listing,
-        "pdf_engine": engine,
-    }), 200
+        # 1) Cuando elige el tipo de plaga (desratizaciÃ³n / desinsectaciÃ³n / sanitizaciÃ³n)
+        if current_node_id == "1748910215188":
+            subserv_label = vars_.get("subservicio", "")
+            serv_key = _canon_servicio_para_precios(subserv_label)
+            mk = precios_desde_por_servicio(serv_key)
+            if mk:
+                resp.message(
+                    "ðŸ’¸ *Precios â€œdesdeâ€ (referencia)*\n"
+                    f"â€¢ Interior: {_fmt_money_clp(mk['interior'])}\n"
+                    f"â€¢ Exterior: {_fmt_money_clp(mk['exterior'])}\n"
+                    f"â€¢ Completo: {_fmt_money_clp(mk['completo'])}\n"
+                    "ðŸ” *Normativa:* DS NÂ° 594 â€” Productos ISP â€” MetodologÃ­a autorizada SEREMI â€” Informe sanitario MINSAL."
+                )
 
-@app.get("/whoami")
-def whoami():
-    return jsonify({
-        "app": "smartplagas-bot",
-        "version": APP_VERSION,
-        "routes": ["/", "/whoami", "/health", "/generate", "/upload", "/files/<name>", "/webhook", "/reload-flow"]
-    }), 200
+        # 2) Cuando elige interior/exterior/ambas
+        if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
+            subserv_label = vars_.get("subservicio", "")
+            serv_key = _canon_servicio_para_precios(subserv_label)
+            mk = precios_desde_por_servicio(serv_key)
+            if mk:
+                if "interior" in sel_text:
+                    val = mk["interior"]; etiqueta = "Interior"
+                elif "exterior" in sel_text:
+                    val = mk["exterior"]; etiqueta = "Exterior"
+                else:
+                    val = mk["completo"]; etiqueta = "Completo (interior + exterior)"
+                resp.message(
+                    f"ðŸ’¡ {etiqueta} *desde* {_fmt_money_clp(val)}.\n"
+                    "ðŸ“ El valor final se ajusta segÃºn mÂ² y complejidad.\n"
+                    "ðŸ” *Normativa:* DS NÂ° 594 â€” Productos ISP â€” MetodologÃ­a autorizada SEREMI â€” Informe sanitario MINSAL."
+                )
+    except Exception as _e:
+        app.logger.warning(f"[mk_desde] aviso no crÃ­tico: {_e}")
+    # === FIN: Mensajes â€œdesdeâ€ automÃ¡ticos ===
 
-@app.route("/files/<path:filename>")
-def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
+    sess["vars"] = vars_
+    sess["node_id"] = chosen.get("nextId") or node.get("nextId")
 
-from flask import Markup
+else:
+    sess["node_id"] = node.get("nextId")
 
-@app.route("/tramos", methods=["GET"])
-def tramos_html():
-    """
-    Tabla HTML de TRAMOS + PRECIOS por servicio.
-    Parámetros opcionales:
-      - servicio: desinsectacion | desratizacion | desinfeccion
-      - scope: interior | exterior | ambas (factor solo para desinsectación/desratización)
-    """
-    servicio = (request.args.get("servicio") or "").strip().lower()
-    scope    = (request.args.get("scope") or "").strip().lower()
+# â¬‡ï¸ Estas lÃ­neas VAN FUERA del if/elif/else (al mismo nivel que el if)
+_flow_emit_until_input(resp, sess)
 
-    servicios_validos = list(PRECIOS.keys())
-    if not servicio or servicio not in PRECIOS:
-        servicio = "desinsectacion"
+if not sess.get("node_id"):
+    _flow_finish_and_generate(resp, form, sess)
 
-    precios = PRECIOS[servicio]
-    filas = []
-    for i, (lo, hi) in enumerate(TRAMOS):
-        base = int(precios[i])
-        total = base
-        if servicio in ("desinsectacion","desratizacion") and scope in ("interior","exterior","ambas"):
-            total = int(aplicar_factor_control_plagas(base, servicio, scope))
-        filas.append((f"{lo}-{hi} m²", base, (total if scope else None)))
+_sess_set(sess_id, sess)
+return str(resp), 200, {"Content-Type":"application/xml"}
 
-    # HTML simple y limpio
-    css = """
-    <style>
-      :root { --bg:#0b1320; --card:#111a2b; --txt:#e6edf3; --mut:#9fb3c8; --acc:#4ea1ff; }
-      body{background:var(--bg);font-family:system-ui,Segoe UI,Roboto,Arial;color:var(--txt);margin:0;padding:24px;}
-      .card{background:var(--card);border-radius:16px;padding:20px;max-width:980px;margin:0 auto;box-shadow:0 8px 24px rgba(0,0,0,.35);}
-      h1{margin:0 0 12px;font-size:22px}
-      .mut{color:var(--mut);margin:0 0 16px}
-      .controls{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
-      select, a.btn{background:#0e2239;border:1px solid #1e3350;color:#e6edf3;border-radius:10px;padding:8px 10px;font-size:14px;text-decoration:none}
-      a.btn:hover{border-color:var(--acc)}
-      table{width:100%;border-collapse:collapse;border-spacing:0}
-      th,td{padding:10px 12px;border-bottom:1px solid #21324a;text-align:left;font-size:14px}
-      th{color:#b8c7d9;font-weight:600}
-      td.money{font-variant-numeric: tabular-nums}
-      .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #234a73;background:#102844;color:#9fd0ff;font-size:12px}
-      .note{margin-top:10px;color:#9fb3c8;font-size:13px}
-    </style>
-    """
-
-    def fmt(n): 
-        try: return f"${int(n):,}".replace(",", ".")
-        except: return "$0"
-
-    opts_serv = "".join(
-        f'<option value="{s}" {"selected" if s==servicio else ""}>{s}</option>' for s in servicios_validos
-    )
-    scopes = ["", "interior", "exterior", "ambas"]
-    labels = {"":"(sin factor)","interior":"interior (0.6)","exterior":"exterior (0.4)","ambas":"ambas (1.0)"}
-    opts_scope = "".join(
-        f'<option value="{s}" {"selected" if s==scope else ""}>{labels[s]}</option>' for s in scopes
-    )
-
-    rows = []
-    for tramo, base, tot in filas:
-        rows.append(
-            f"<tr><td>{tramo}</td><td class='money'>{fmt(base)}</td><td class='money'>{fmt(tot) if tot is not None else '—'}</td></tr>"
-        )
-    rows_html = "\n".join(rows)
-
-    tip = ""
-    if scope:
-        tip = f"<span class='pill'>scope: {labels.get(scope, scope)}</span>"
-    hdr = f"<h1>Tramos y precios — {servicio}</h1><p class='mut'>Tabla por tramo (m²). {tip}</p>"
-
-    controls = f"""
-    <form class="controls" method="get" action="/tramos">
-      <label>Servicio&nbsp;
-        <select name="servicio">{opts_serv}</select>
-      </label>
-      <label>Alcance&nbsp;
-        <select name="scope">{opts_scope}</select>
-      </label>
-      <button class="btn" type="submit">Ver</button>
-      <a class="btn" href="/_debug/tabla_servicio?servicio={servicio}{('&scope='+scope) if scope else ''}" target="_blank">Ver JSON</a>
-    </form>
-    """
-
-    table = f"""
-    <table>
-      <thead><tr><th>Tramo</th><th>Precio base</th><th>Precio con factor</th></tr></thead>
-      <tbody>
-        {rows_html}
-      </tbody>
-    </table>
-    <div class="note">* El factor (interior/exterior/ambas) solo aplica a Desinsectación y Desratización.</div>
-    """
-
-    html = f"<!doctype html><html><head><meta charset='utf-8'><title>Tramos</title>{css}</head><body><div class='card'>{hdr}{controls}{table}</div></body></html>"
-    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
-
-
-# -----------------------------------------------------------------------------
-# /generate (REST)
-# -----------------------------------------------------------------------------
-@app.post("/generate")
-def generate(): return handle_generate()
-
-# -----------------------------------------------------------------------------
-# /upload único (con token)
-# -----------------------------------------------------------------------------
-UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
-
-@app.route("/upload", methods=["POST", "OPTIONS"])
-def upload_pdf():
-    if request.method == "OPTIONS":
-        return ("", 204)
-
-    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    if not token:
-        token = request.headers.get("X-Upload-Token", "").strip()
-    if not UPLOAD_TOKEN or token != UPLOAD_TOKEN:
-        return jsonify(ok=False, error="unauthorized"), 401
-
-    f = request.files.get("file") or request.files.get("pdf") or request.files.get("document")
-    if not f or not f.filename:
-        return jsonify(ok=False, error="missing file"), 400
-
-    os.makedirs(FILES_DIR, exist_ok=True)
-    safe_name = secure_filename(f.filename or "archivo.pdf")
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_name = f"{ts}_{safe_name}"
-    out_path = os.path.join(FILES_DIR, out_name)
-    f.save(out_path)
-
-    public = public_base_from_request().rstrip("/")
-    url = f"{public}/files/{out_name}"
-    return jsonify(ok=True, url=url, saved=out_name), 200
 
 # -----------------------------------------------------------------------------
 @app.post("/reload-flow")
@@ -1506,3 +1395,4 @@ _log_url_map()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True, use_reloader=False)
+
