@@ -9,7 +9,7 @@ from werkzeug.utils import secure_filename
 import redis
 
 # -----------------------------------------------------------------------------
-# Config bÃ¡sica / logging
+# Config básica / logging
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 load_dotenv(override=False)
@@ -17,13 +17,8 @@ APP_VERSION = os.getenv("RAILWAY_GIT_COMMIT_SHA", "dev-local")
 
 # Profundidad por defecto para piscinas (si el usuario no la entrega)
 POOL_DEFAULT_DEPTH = float(os.getenv("POOL_DEFAULT_DEPTH", "1.4"))
-# Volumen mÃ­nimo asumido en piscinas cuando no hay m2/m3
+# Volumen mínimo asumido en piscinas cuando no hay m2/m3
 PISCINA_MIN_M3_DEFAULT = float(os.getenv("PISCINA_MIN_M3_DEFAULT", "30"))
-
-# --- Precios base configurables ---
-UNIT_PRICE_M2_DESINSECTACION = float(os.getenv("UNIT_PRICE_M2_DESINSECTACION", "650"))  # CLP/m²
-FACTOR_INTERIOR = 0.6
-FACTOR_EXTERIOR = 0.4
 
 # -----------------------------------------------------------------------------
 # App + CORS
@@ -115,10 +110,10 @@ TEMPLATE_DIRS = [
     os.path.join(BASE_DIR, "templates"),
     "/app/templates",
     "/templates",
-    FILES_DIR,  # por si se subiÃ³ vÃ­a /upload
+    FILES_DIR,  # por si se subió vía /upload
 ]
 
-# EnvÃ­os
+# Envíos
 SEND_PDF    = (os.getenv("SEND_PDF_TO_CLIENT", "true").lower() == "true")
 SEND_DOC    = (os.getenv("SEND_DOC_TO_CLIENT", "false").lower() == "true")
 MEDIA_DELAY = float(os.getenv("MEDIA_DELAY_SECONDS", "1.0"))
@@ -129,280 +124,37 @@ twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
 # -----------------------------------------------------------------------------
 # Precios y utilidades
 # -----------------------------------------------------------------------------
-TRAMOS = [
-    (0, 50), (51, 100), (101, 200), (201, 300),
-    (301, 500), (501, 1000), (1001, 2000), (2001, 9_999_999)
-]
+# Tramos por m² (plagas)
+TRAMOS = [(0,50),(51,100),(101,200),(201,300),(301,500),(501,1000),(1001,2000),(2001,9999999)]
 
-# Base general de DESINSECTACIÓN por tramo (valores finales)
-BASE_DESINSECTACION = [56_000, 71_250, 97_500, 120_000, 157_500, 247_500, 405_000, 660_000]
-
-# Diccionario de precios finales por servicio (sin cálculos posteriores)
+# 🔁 NUEVO: claves detalladas por servicio + subárea (interior / exterior / interior y exterior)
 PRECIOS = {
-    # DESINSECTACIÓN (base y splits)
-    "desinsectacion":            BASE_DESINSECTACION,
-    "desinsectacion_interior":  [int(v * 0.6) for v in BASE_DESINSECTACION],
-    "desinsectacion_exterior":  [int(v * 0.4) for v in BASE_DESINSECTACION],
-    "desinsectacion_ambas":     [int(v * 1.0) for v in BASE_DESINSECTACION],
+    "desinsectacion interior":             [33600, 42750, 58500,  72000,  94500, 148500, 243000, 396000],
+    "desinsectacion exterior":             [22400, 28500, 39000,  48000,  63000,  99000, 162000, 264000],
+    "desinsectacion interior y exterior":  [56000, 71250, 97500, 120000, 157500, 247500, 405000, 660000],
 
-    # DESRATIZACIÓN (splits respecto a la misma base)
-    "desratizacion_interior":   [int(v * 0.6) for v in BASE_DESINSECTACION],
-    "desratizacion_exterior":   [int(v * 0.4) for v in BASE_DESINSECTACION],
-    "desratizacion_ambas":      [int(v * 1.0) for v in BASE_DESINSECTACION],
+    "desratizacion interior":              [30600, 39600, 54000,  67500,  87750, 135000, 211500, 337500],
+    "desratizacion exterior":              [20400, 26400, 36000,  45000,  58500,  90000, 141000, 225000],
+    "desratizacion interior y exterior":   [51000, 66000, 90000, 112500, 146250, 225000, 352500, 562500],
 }
 
-# Alias de texto que pueden venir del flujo/usuario
-SERVICE_ALIASES = {
-    # desinsectación
-    "desinsectacion":              "desinsectacion",
-    "desinsectación":              "desinsectacion",
-    "desinsectacion interior":     "desinsectacion_interior",
-    "desinsectacion exterior":     "desinsectacion_exterior",
-    "desinsectacion ambas":        "desinsectacion_ambas",
-    "desinsectación interior":     "desinsectacion_interior",
-    "desinsectación exterior":     "desinsectacion_exterior",
-    "desinsectación ambas":        "desinsectacion_ambas",
-
-    # desratización
-    "desratizacion interior":      "desratizacion_interior",
-    "desratizacion exterior":      "desratizacion_exterior",
-    "desratizacion ambas":         "desratizacion_ambas",
-    "desratización interior":      "desratizacion_interior",
-    "desratización exterior":      "desratizacion_exterior",
-    "desratización ambas":         "desratizacion_ambas",
-}
-
-def tramo_index(m2: float) -> int:
-    for i, (a, b) in enumerate(TRAMOS):
-        if a <= m2 <= b:
-            return i
-    return len(TRAMOS) - 1
-
-def precio_servicio(servicio_key: str, m2: float) -> int:
-    key = SERVICE_ALIASES.get(servicio_key.lower().strip(), servicio_key)
-    idx = tramo_index(float(m2))
-    return PRECIOS[key][idx]
-
-
+# Tramos por m³ (piscinas)
 TRAMOS_M3 = [(0,25),(26,50),(51,100),(101,999999)]
 PRECIOS_PISCINA = {
-    "piscina_plan_intermedio_m3":  [4400,3800,3500,3250],
-    "piscina_mantencion_bomba_m3": [3600,3350,3150,2900],
-    "piscina_shock_m3":            [1700,1450,1250,1000],
-    "piscina_diagnostico_total":   [34000,39000,45000,50500],
-    "piscina_cambio_arena_total":  [101000,157000,224000,336000],
+    "piscina_plan_intermedio_m3":  [4400, 3800, 3500, 3250],      # $/m³
+    "piscina_mantencion_bomba_m3": [3600, 3350, 3150, 2900],      # $/m³
+    "piscina_shock_m3":            [1700, 1450, 1250, 1000],      # $/m³
+    "piscina_diagnostico_total":   [34000, 39000, 45000, 50500],  # total
+    "piscina_cambio_arena_total":  [101000,157000,224000,336000], # total
 }
 
+# Cámaras (unitarios)
 CAM_PRECIOS = {
     "alambricas":   {"interior":77000,"exterior":99000},
     "inalambricas": {"interior":66000,"exterior":88000},
     "solares":      {"exterior":165000},
     "dvr":          {"interior":82500,"exterior":104500},
 }
-
-# =====================[ FACTORES INTERIOR/EXTERIOR ]==========================
-SPLIT_IE = {"interior": 0.6, "exterior": 0.4, "ambas": 1.0}
-
-def _norm(s: str) -> str:
-    return str(s or "").strip().lower()
-
-def _normaliza_alcance(v) -> str:
-    s = _norm(v)
-    # soporta números del flujo y alias comunes
-    mapa = {
-        "1": "interior", "int": "interior",
-        "2": "exterior", "ext": "exterior",
-        "3": "ambas", "ambos": "ambas", "ambas zonas": "ambas",
-    }
-    return mapa.get(s, s if s in SPLIT_IE else "ambas")
-
-def _extrae_alcance(info: dict) -> str:
-    """
-    Trata de encontrar el alcance en varios campos posibles del flujo.
-    Añade aquí otros alias si tu JSON usa otro nombre.
-    """
-    candidatos = [
-        info.get("alcance"),
-        info.get("alcance_plagas"),
-        info.get("tipo_lugar"),
-        info.get("tipo_desinsectacion"),
-        info.get("servicio_desinsectacion"),
-        info.get("desinsectacion_tipo"),
-        info.get("zona_servicio"),
-        info.get("servicio_plagas_tipo"),
-        info.get("servicio_tipo"),
-        info.get("ambito"),  # por si acaso
-    ]
-    for c in candidatos:
-        if c:
-            return _normaliza_alcance(c)
-    return "ambas"
-
-def precio_plagas_total(servicio_key: str, m2: float, info: dict) -> int:
-    """
-    Precio final para desinsectación/desratización aplicando Interior/Exterior/Ambas.
-    - Base de tramo: BASE_DESINSECTACION
-    - Factor: SPLIT_IE
-    """
-    idx = tramo_index(float(m2))
-    base = BASE_DESINSECTACION[idx]
-    alcance = _extrae_alcance(info)
-    factor = SPLIT_IE.get(alcance, 1.0)
-    return int(round(base * factor))
-
-# =====================[ FACTORES Y HELPERS PLAGAS ]=====================
-FACTOR_INTERIOR = 0.6
-FACTOR_EXTERIOR = 0.4
-FACTOR_AMBAS    = 1.0
-
-def _tipo_servicio(vars_: dict) -> str:
-    """
-    Retorna 'desinsectacion', 'desratizacion' o '' detectando desde campos comunes.
-    Acepta claves: servicio_label, servicio_precio, servicio, tipo_servicio, categoria, service, tipo.
-    """
-    keys = ["servicio_precio", "servicio_label", "servicio", "tipo_servicio", "categoria", "service", "tipo"]
-    txt = ""
-    for k in keys:
-        txt = (vars_.get(k, "") or "").strip().lower()
-        if txt:
-            break
-    if any(w in txt for w in ["desinsect", "insect"]):
-        return "desinsectacion"
-    if any(w in txt for w in ["desrat", "roedor", "rat"]):
-        return "desratizacion"
-    return ""
-
-def _scope_from_vars(vars_: dict) -> str:
-    """
-    Devuelve 'interior', 'exterior' o 'ambas' segÃºn variables del flujo.
-    Acepta interior_exterior, area_tratamiento, tratamiento_area, zona, scope, alcance, area_plaga, interiorExterior.
-    """
-    keys = ["interior_exterior","area_tratamiento","tratamiento_area","zona","scope","alcance","area_plaga","interiorExterior"]
-    raw = ""
-    for k in keys:
-        raw = (vars_.get(k, "") or "").strip().lower()
-        if raw:
-            break
-    if any(w in raw for w in ["ambas","ambos","interior y exterior","interior & exterior","i/e","todo","completo"]):
-        return "ambas"
-    if "interior" in raw and "exterior" in raw:
-        return "ambas"
-    if "interior" in raw or raw == "i":
-        return "interior"
-    if "exterior" in raw or raw == "e":
-        return "exterior"
-    return ""
-
-def _scope_from_any(d: dict) -> str:
-    """
-    Fallback: intenta deducir el alcance desde cualquier campo/label visible.
-    """
-    s = _scope_from_vars(d)
-    if s:
-        return s
-    lbls = [
-        d.get("servicio_label",""), d.get("servicio",""),
-        d.get("subservicio",""), d.get("detalle",""), d.get("detalles","")
-    ]
-    raw = " ".join(x for x in lbls if x).lower()
-    if any(w in raw for w in ["interior y exterior","interior & exterior","ambas","ambos","completo"]):
-        return "ambas"
-    if "interior" in raw and "exterior" in raw:
-        return "ambas"
-    if "interior" in raw:
-        return "interior"
-    if "exterior" in raw:
-        return "exterior"
-    return ""
-
-def _metros_desde_vars(vars_: dict) -> float:
-    """
-    Obtiene m2 desde campos comunes.
-    """
-    keys = ["m2","metros2","metros_cuadrados","area_m2","superficie_m2","superficie"]
-    for k in keys:
-        v = vars_.get(k)
-        if v is None:
-            continue
-        try:
-            num = re.sub(r"[^\d.,-]", "", str(v)).replace(",", ".")
-            return max(0.0, float(num))
-        except:
-            continue
-    return 0.0
-
-def _factor_por_scope(scope: str) -> float:
-    if scope == "interior":
-        return FACTOR_INTERIOR
-    if scope == "exterior":
-        return FACTOR_EXTERIOR
-    if scope == "ambas":
-        return FACTOR_AMBAS
-    return FACTOR_AMBAS  # por defecto (total)
-
-def aplicar_factor_control_plagas(precio_tramo_base: float, tipo: str, scope: str) -> float:
-    """
-    Solo para 'desinsectacion' y 'desratizacion':
-      interior -> 0.6
-      exterior -> 0.4
-      ambas    -> 1.0
-    Otros servicios retornan el base sin cambios.
-    """
-    if tipo in ("desinsectacion","desratizacion"):
-        return round(precio_tramo_base * _factor_por_scope(scope), 0)
-    return precio_tramo_base
-
-def build_descripcion_pdf(tipo: str, m2: float, scope: str) -> str:
-    """
-    DescripciÃ³n para PDF:
-    - DesinsectaciÃ³n: ðŸœðŸ•·ï¸ DesinsectaciÃ³n â€” 150 m2 - interior|exterior|interior y exterior
-    - DesratizaciÃ³n : DesratizaciÃ³n â€” 150 m2 - interior|exterior|interior y exterior
-    - Otros         : Servicio de control de plagas â€” ...
-    """
-    m2_txt = f"{int(m2)} m2" if m2 and abs(m2 - int(m2)) < 0.01 else (f"{m2:g} m2" if m2 else "")
-    if scope == "ambas":
-        alcance = "interior y exterior"
-    elif scope in ("interior","exterior"):
-        alcance = scope
-    else:
-        alcance = ""
-
-    if tipo == "desinsectacion":
-        base = "ðŸœðŸ•·ï¸ DesinsectaciÃ³n"
-    elif tipo == "desratizacion":
-        base = "DesratizaciÃ³n"
-    else:
-        base = "Servicio de control de plagas"
-
-    if m2_txt:
-        base += f" â€” {m2_txt}"
-    if alcance:
-        base += f" - {alcance}"
-    return base
-
-def build_etiqueta_servicio_tabla(tipo: str, m2: float, scope: str) -> str:
-    """
-    Mismo texto que la descripciÃ³n pero SIN emojis (para la celda 'servicio' de la tabla).
-    """
-    m2_txt = f"{int(m2)} m2" if m2 and abs(m2 - int(m2)) < 0.01 else (f"{m2:g} m2" if m2 else "")
-    if scope == "ambas":
-        alcance = "interior y exterior"
-    elif scope in ("interior","exterior"):
-        alcance = scope
-    else:
-        alcance = ""
-
-    titulo = {
-        "desinsectacion": "DesinsectaciÃ³n",
-        "desratizacion":  "DesratizaciÃ³n"
-    }.get(tipo, "Servicio de control de plagas")
-
-    txt = titulo
-    if m2_txt:
-        txt += f" â€” {m2_txt}"
-    if alcance:
-        txt += f" - {alcance}"
-    return txt
 
 def _fmt_money_clp(v:int)->str:
     try:
@@ -415,38 +167,9 @@ def _descuento_por_cantidad(qty: int) -> float:
     if qty >= 3: return 0.90
     if qty == 2: return 0.95
     return 1.00
-
-def _infer_area_from_text(txt: str, tipo_camara: str) -> str:
-    if (tipo_camara or "").lower().startswith("sola"): return "exterior"
-    t = (txt or "").lower()
-    exterior_words = ("exterior","patio","jardin","jardÃ­n","porton","portÃ³n","entrada","estacionamiento","perimetro","perÃ­metro","terraza","muro")
-    return "exterior" if any(w in t for w in exterior_words) else "interior"
-
-def _canon_tipo_camara(s: str) -> str:
-    s = (s or "").strip().lower()
-    if "dvr" in s or "grabador" in s: return "dvr"
-    if "inalam" in s or "wi fi" in s or "wi-fi" in s or "wifi" in s: return "inalambricas"
-    if "sola" in s: return "solares"
-    return "alambricas"
-
-def _cantidad_aproximada(opcion: str) -> int:
-    t = (opcion or "").lower()
-    if "1" in t and "2" in t: return 2
-    if "3" in t and "5" in t: return 4
-    if "mas" in t or "mÃ¡s" in t or "5" in t: return 6
-    m = re.search(r"\d+", t)
-    return int(m.group(0)) if m else 1
-
-def calcular_total_camaras(tipo_camara_humano: str, area_vigilar: str, cantidad_opcion: str):
-    tipo = _canon_tipo_camara(tipo_camara_humano)
-    qty  = _cantidad_aproximada(cantidad_opcion)
-    area = _infer_area_from_text(area_vigilar, tipo)
-    tabla = CAM_PRECIOS.get(tipo, {})
-    if area not in tabla: area = next(iter(tabla.keys()), "exterior")
-    base_unit = int(tabla[area])
-    unit = int(round(base_unit * _descuento_por_cantidad(qty)))
-    return unit * qty, tipo, qty, unit, area
-
+# -----------------------------------------------------------------------------
+# Normalizaciones y Aliases de servicio/subárea
+# -----------------------------------------------------------------------------
 def _strip_accents_and_symbols(text: str) -> str:
     t = text or ""
     t = re.sub(r"[\u2460-\u24FF\u2600-\u27BF\ufe0f\u200d]", "", t)
@@ -460,53 +183,84 @@ def _norm(s: str) -> str:
     s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
     return re.sub(r"\s+", " ", s).strip()
 
-def _canon_piscina_key(label: str) -> str:
-    """Mapea label humano a clave de precios de piscina."""
-    s = _norm(label)
-    if "plan intermedio" in s or ("tratamient" in s and "limpiez" in s): return "piscina_plan_intermedio_m3"
-    if ("bomba" in s) or ("filtro" in s) or ("mantencion" in s):         return "piscina_mantencion_bomba_m3"
-    if ("shock" in s) or ("clor" in s):                                   return "piscina_shock_m3"
-    if ("diagn" in s):                                                    return "piscina_diagnostico_total"
-    if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
-    return ""
+def _normalize_txt(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = " ".join(s.split())
+    return s
 
-def _dominio_from_info(info: dict) -> str:
-    """
-    DetecciÃ³n robusta del dominio:
-    - Piscinas si label mapea a una key de piscina o si hay campos tÃ­picos (tamaÃ±o, profundidad, m3).
-    - CÃ¡maras si hay tipo/cantidad/Ã¡rea de cÃ¡maras.
-    - Plagas si texto contiene plaga/desratiz/desinsect/sanitiz.
-    """
-    label = info.get("servicio_label","")
-    s = _norm(label)
-    if _canon_piscina_key(label): return "piscinas"
-    if "piscin" in s:             return "piscinas"
-    if info.get("tamano_piscina") or info.get("profundidad") or ("m3" in info):
-        return "piscinas"
-    if "camar" in s or info.get("tipo_camara") or info.get("cantidad_camara"):
-        return "camaras"
-    if any(k in s for k in ("plaga","desratiz","desinsect","sanitiz")):
-        return "plagas"
-    return "otro"
-
-def _canon_servicio_para_precios(servicio_humano: str) -> str:
+# Base → "desinsectacion" | "desratizacion"
+def _canon_base_plaga(servicio_humano: str) -> str:
     s = _strip_accents_and_symbols(servicio_humano)
-    if "desratiz" in s:  return "desratizacion"
-    if "desinfecc" in s: return "desinfeccion"
-    if "desinsect" in s: return "desinsectacion"
+    if "ratiz" in s:  return "desratizacion"
+    if "infecc" in s: return "desinfeccion"  # (si alguna vez lo reactivas)
     return "desinsectacion"
 
-# --- Parseo "6x3", "10 x 4,5", "8x4mts" o solo "56" -> m2 ---
+# Subárea → "interior" | "exterior" | "interior y exterior"
+def _canon_subarea(subarea_humano: str) -> str:
+    s = _normalize_txt(subarea_humano)
+    if not s: return ""
+    if s in {"interior"}: return "interior"
+    if s in {"exterior"}: return "exterior"
+    if s in {"ambas","ambos","completo","interior y exterior","interior + exterior","interior exterior"}:
+        return "interior y exterior"
+    # heurística por palabras
+    if "interior" in s and "exterior" in s: return "interior y exterior"
+    if "interior" in s: return "interior"
+    if "exterior" in s: return "exterior"
+    if "amb" in s or "complet" in s: return "interior y exterior"
+    return ""
+
+# Clave final para PRECIOS
+def servicio_clave_plaga(servicio_humano: str, subarea_humano: str) -> str:
+    base = _canon_base_plaga(servicio_humano)
+    area = _canon_subarea(subarea_humano) or "interior y exterior"
+    clave = f"{base} {area}"
+    return clave
+
+# --- Helpers Cámaras ---
+def _infer_area_from_text(txt: str, tipo_camara: str) -> str:
+    if (tipo_camara or "").lower().startswith("sola"): return "exterior"
+    t = (txt or "").lower()
+    exterior_words = ("exterior","patio","jardin","jardín","porton","portón","entrada","estacionamiento","perimetro","perímetro","terraza","muro")
+    return "exterior" if any(w in t for w in exterior_words) else "interior"
+
+def _canon_tipo_camara(s: str) -> str:
+    s = (s or "").strip().lower()
+    if "dvr" in s or "grabador" in s: return "dvr"
+    if "inalam" in s or "wi fi" in s or "wi-fi" in s or "wifi" in s: return "inalambricas"
+    if "sola" in s: return "solares"
+    return "alambricas"
+
+def _cantidad_aproximada(opcion: str) -> int:
+    t = (opcion or "").lower()
+    if "1" in t and "2" in t: return 2
+    if "3" in t and "5" in t: return 4
+    if "mas" in t or "más" in t or "5" in t: return 6
+    m = re.search(r"\d+", t)
+    return int(m.group(0)) if m else 1
+
+def calcular_total_camaras(tipo_camara_humano: str, area_vigilar: str, cantidad_opcion: str):
+    tipo = _canon_tipo_camara(tipo_camara_humano)
+    qty  = _cantidad_aproximada(cantidad_opcion)
+    area = _infer_area_from_text(area_vigilar, tipo)
+    tabla = CAM_PRECIOS.get(tipo, {})
+    if area not in tabla: area = next(iter(tabla.keys()), "exterior")
+    base_unit = int(tabla[area])
+    unit = int(round(base_unit * _descuento_por_cantidad(qty)))
+    return unit * qty, tipo, qty, unit, area
+
+# --- Piscinas: m2 y m3 ---
 def parse_pool_size_to_m2(size_text: str) -> float:
     if not size_text:
         return 0.0
     s = str(size_text).lower()
     s = s.replace("metros", "").replace("metro", "")
-    s = s.replace("m2", "").replace("mÂ²", "").replace("mts", "").replace("mt", "").replace("m", "")
+    s = s.replace("m2", "").replace("m²", "").replace("mts", "").replace("mt", "").replace("m", "")
     s = s.replace(",", ".").strip()
     s = s.replace("por", "x").replace("*", "x")
     s = re.sub(r"\s+", "", s)
-    m = re.match(r"^(\d+(?:\.\d+)?)[xÃ—](\d+(?:\.\d+)?)$", s)
+    m = re.match(r"^(\d+(?:\.\d+)?)[x×](\d+(?:\.\d+)?)$", s)
     if m:
         try:
             a = float(m.group(1)); b = float(m.group(2))
@@ -517,23 +271,33 @@ def parse_pool_size_to_m2(size_text: str) -> float:
     if m2m:
         return float(m2m.group(1))
     return 0.0
+def idx_tramo_por_m2(m2: float) -> int:
+    try:
+        val = float(m2)
+    except Exception:
+        raise ValueError("Los m² no son numéricos.")
+    if val < 0:
+        raise ValueError("Los m² no pueden ser negativos.")
+    for i, (lo, hi) in enumerate(TRAMOS):
+        if lo <= val <= hi:
+            return i
+    return len(TRAMOS) - 1
 
-def precio_por_tramo(servicio_precio: str, m2: float) -> int:
-    tabla = PRECIOS.get(servicio_precio)
+def precio_por_tramo_plaga(clave_servicio: str, m2: float) -> int:
+    tabla = PRECIOS.get(clave_servicio)
     if not tabla: return 0
-    m2n = int(float(m2) if m2 else 0)
-    for idx, (lo, hi) in enumerate(TRAMOS):
-        if lo <= m2n <= hi: return int(tabla[idx])
-    return int(tabla[-1])
+    i = idx_tramo_por_m2(m2 or 0)
+    if len(tabla) != len(TRAMOS):
+        raise RuntimeError(f"Inconsistencia: {clave_servicio} tiene {len(tabla)} precios, TRAMOS={len(TRAMOS)}.")
+    return int(tabla[i])
 
+# Piscinas
 def _volumen_estimado_m3(info: dict) -> float:
-    # 1) explÃ­cito
     for k in ("m3","volumen","volumen_m3"):
         v = str(info.get(k, "") or "").strip()
         if v:
             try: return float(v.replace(",", "."))
             except Exception: pass
-    # 2) m2 * profundidad (si no hay profundidad, usa default)
     try: m2 = float(info.get("m2") or 0)
     except Exception: m2 = 0.0
     prof_raw = info.get("profundidad")
@@ -551,52 +315,61 @@ def _volumen_estimado_m3(info: dict) -> float:
 def _precio_piscina_por_tramo(serv_key: str, m3: float) -> int:
     tabla = PRECIOS_PISCINA.get(serv_key)
     if not tabla: return 0
-    # Si el servicio es por m3 y no hay m3, aplicar m3 mÃ­nimo (fallback definitivo)
     if serv_key.endswith("_m3") and (m3 is None or m3 <= 0):
         m3 = PISCINA_MIN_M3_DEFAULT
-    # seleccionar tramo
     idx = len(TRAMOS_M3) - 1
     for i, (lo, hi) in enumerate(TRAMOS_M3):
         if lo <= m3 <= hi: idx = i; break
     if serv_key.endswith("_m3"):
         unit = tabla[idx]
         return int(round(unit * m3))
-    # tarifa fija por total
     return int(tabla[idx] or 0)
 
 def precio_total(info: dict) -> int:
     dominio = _dominio_from_info(info)
-
     if dominio == "piscinas":
         label = info.get("servicio_label", "")
-        override = (info.get("servicio_precio") or "").strip()
-        key = override if override in PRECIOS_PISCINA else (_canon_piscina_key(label) or "piscina_plan_intermedio_m3")
+        key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
         m3 = _volumen_estimado_m3(info)
-        # Fallback para TODOS los servicios por m3
         if key.endswith("_m3") and (m3 is None or m3 <= 0):
             m3 = PISCINA_MIN_M3_DEFAULT
             info["__m3_asumido__"] = True
             info["__m3_asumido_val__"] = m3
         return _precio_piscina_por_tramo(key, m3)
-
-    elif dominio == "plagas":
-        # SOLO plagas: aplicar factor 0.6/0.4/1.0 a desinsectación/desratización
-        tipo  = _tipo_servicio(info)               # 'desinsectacion' | 'desratizacion' | ''
-        scope = _scope_from_any(info)              # 'interior' | 'exterior' | 'ambas' | ''
-        base  = precio_por_tramo(info.get("servicio_precio",""), info.get("m2") or 0)
-        total = aplicar_factor_control_plagas(base, tipo, scope)
-        return int(total)
-
-    elif dominio == "camaras":
+    if dominio == "plagas":
+        clave = servicio_clave_plaga(info.get("servicio_label",""), info.get("subarea","") or info.get("subservicio_area",""))
+        return precio_por_tramo_plaga(clave, info.get("m2") or 0)
+    if dominio == "camaras":
         total, _, _, _, _ = calcular_total_camaras(
-            info.get("tipo_camara",""),
-            info.get("area_vigilar",""),
-            info.get("cantidad_camara","")
+            info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
         return total
-
     return 0
 
+# Dominio y piscina key
+def _canon_piscina_key(label: str) -> str:
+    s = _norm(label)
+    if "plan intermedio" in s or ("tratamient" in s and "limpiez" in s): return "piscina_plan_intermedio_m3"
+    if ("bomba" in s) or ("filtro" in s) or ("mantencion" in s):         return "piscina_mantencion_bomba_m3"
+    if ("shock" in s) or ("clor" in s):                                   return "piscina_shock_m3"
+    if ("diagn" in s):                                                    return "piscina_diagnostico_total"
+    if ("arena" in s) or ("carga" in s):                                  return "piscina_cambio_arena_total"
+    return ""
+
+def _dominio_from_info(info: dict) -> str:
+    label = info.get("servicio_label","")
+    s = _norm(label)
+    if _canon_piscina_key(label): return "piscinas"
+    if "piscin" in s:             return "piscinas"
+    if info.get("tamano_piscina") or info.get("profundidad") or ("m3" in info):
+        return "piscinas"
+    if "camar" in s or info.get("tipo_camara") or info.get("cantidad_camara"):
+        return "camaras"
+    if any(k in s for k in ("plaga","desratiz","desinsect","sanitiz")):
+        return "plagas"
+    return "otro"
+
+# --- Normalización de payload externo y generate ---
 def _safe(x):
     if x is None: return ""
     if isinstance(x, (list, tuple)): return ", ".join(_safe(v) for v in x)
@@ -623,61 +396,13 @@ def build_urls(filename_docx: str, filename_pdf: str):
         return u
     return _bypass(docx_url), _bypass(pdf_url)
 
-# --- Marketing "desde" (interior/exterior/completo) con split 60/40 ---
-SPLIT_IE = {"interior": 0.60, "exterior": 0.40}
+# Mostrar "desde" = primer tramo del servicio elegido
+def precio_desde_prim_tramo(clave_servicio: str) -> int:
+    tabla = PRECIOS.get(clave_servicio)
+    if not tabla: return 0
+    return int(tabla[0])
 
-def precios_desde_por_servicio(serv_key: str) -> dict:
-    """Retorna 'desde' usando el primer tramo (0-50 mÂ²) y split 60/40."""
-    tabla = PRECIOS.get(serv_key)
-    if not tabla:
-        return {}
-    base = int(tabla[0])  # tramo 0-50 mÂ² como "desde"
-    return {
-        "completo": base,
-        "interior": int(round(base * SPLIT_IE["interior"])),
-        "exterior": int(round(base * SPLIT_IE["exterior"])),
-    }
-
-def _fmt_clp(n: float) -> str:
-    # Formato chileno simple: $97.500
-    try:
-        n = int(round(n))
-    except Exception:
-        pass
-    return f"${n:,}".replace(",", ".")
-
-def calcular_total_desinsectacion(m2: float, cobertura: str, unit_price: float = UNIT_PRICE_M2_DESINSECTACION):
-    """
-    cobertura: 'interior' | 'exterior' | 'ambas' (también acepta '1','2','3')
-    Retorna: dict con total y breakdown interior/exterior
-    """
-    c = (cobertura or "").strip().lower()
-    c = {"1": "interior", "2": "exterior", "3": "ambas"}.get(c, c)
-
-    if c == "interior":
-        sub_int = m2 * unit_price
-        sub_ext = 0.0
-    elif c == "exterior":
-        sub_int = 0.0
-        sub_ext = m2 * unit_price
-    else:  # ambas
-        sub_int = m2 * unit_price * FACTOR_INTERIOR
-        sub_ext = m2 * unit_price * FACTOR_EXTERIOR
-
-    total = sub_int + sub_ext
-    return {
-        "m2": m2,
-        "cobertura": c or "ambas",
-        "unit_price": unit_price,
-        "subtotal_interior": sub_int,
-        "subtotal_exterior": sub_ext,
-        "total": total,
-        "total_fmt": _fmt_clp(total),
-    }
-
-# -----------------------------------------------------------------------------
-# DOCX -> PDF
-# -----------------------------------------------------------------------------
+# --- DOCX -> PDF ---
 try:
     from docx2pdf import convert as docx2pdf_convert
 except Exception:
@@ -697,7 +422,7 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
     outdir = os.path.dirname(pdf_path)
     bin_lo = _lo_bin()
     if not bin_lo:
-        raise RuntimeError("LibreOffice no estÃ¡ disponible en el contenedor.")
+        raise RuntimeError("LibreOffice no está disponible en el contenedor.")
     cmd = [bin_lo, "--headless", "--convert-to", "pdf", "--outdir", outdir, docx_path]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     base_pdf = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
@@ -705,7 +430,7 @@ def convertir_docx_a_pdf_con_lo(docx_path: str, pdf_path: str) -> None:
     if os.path.exists(generated) and generated != pdf_path:
         os.replace(generated, pdf_path)
     if not os.path.exists(pdf_path):
-        raise RuntimeError("LibreOffice no generÃ³ el PDF")
+        raise RuntimeError("LibreOffice no generó el PDF")
 
 def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
     if os.name == "nt" and docx2pdf_convert is not None:
@@ -722,9 +447,8 @@ def convertir_docx_a_pdf(docx_path: str, pdf_path: str) -> None:
                 except Exception: pass
         if os.path.exists(pdf_path): return
     convertir_docx_a_pdf_con_lo(docx_path, pdf_path)
-
 # -----------------------------------------------------------------------------
-# SelecciÃ³n de plantilla + Render DOCX
+# Selección de plantilla + Render DOCX
 # -----------------------------------------------------------------------------
 def _select_template_path(info: dict) -> str:
     dom = _dominio_from_info(info) or "otro"
@@ -788,32 +512,18 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
             m2_val = float(info.get("m2", 0))
             m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
         except Exception:
-            m2_val = _metros_desde_vars(info)
-            m2_txt = str(int(m2_val)) if (m2_val and float(m2_val).is_integer()) else (str(m2_val) if m2_val else "")
-
-        tipo = _tipo_servicio(info)
-        scope = _scope_from_any(info)
-
-        desc_pdf = build_descripcion_pdf(tipo, m2_val, scope)
-        etiqueta = build_etiqueta_servicio_tabla(tipo, m2_val, scope)
-
-        total_int = precio_total(info)
-
+            m2_txt = str(info.get("m2", "")) or ""
         ctx["m2"] = m2_txt
-        ctx["linea_servicio"] = etiqueta
+        ctx["linea_servicio"] = info["servicio_label"] + (f" — {info.get('subarea','')}" if info.get("subarea") else "")
         ctx["linea_medida"] = m2_txt if m2_txt else "1"
-        ctx["linea_total"] = _fmt_money_clp(total_int)
-        ctx["precio"] = _fmt_money_clp(total_int)
-        ctx["total"] = _fmt_money_clp(total_int)
-        ctx["descripcion"] = desc_pdf
-        ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI." if tipo == "desratizacion" else ""
+        ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
+        ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
 
     elif dom == "piscinas":
         try:
             m2_val = float(info.get("m2") or 0)
         except Exception:
             m2_val = 0.0
-
         label = info.get("servicio_label", "")
         key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
         m3_val = _volumen_estimado_m3(info)
@@ -825,11 +535,11 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         total_int = _precio_piscina_por_tramo(key, m3_val)
 
         ctx["precio"] = _fmt_money_clp(total_int)
-        ctx["total"] = _fmt_money_clp(total_int)
+        ctx["total"]  = _fmt_money_clp(total_int)
         ctx["linea_total"] = _fmt_money_clp(total_int)
 
         m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
-        m2_txt = str(int(m2_val)) if (m2_val and float(m2_val).is_integer()) else (str(m2_val) if m2_val else "")
+        m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
         ctx["m2"] = m2_txt
         ctx["m3"] = m3_txt
         ctx["linea_servicio"] = info["servicio_label"]
@@ -877,61 +587,21 @@ def send_admin_copy(resumen_texto: str, pdf_url: str = "", docx_url: str = ""):
         return {"warn": "admin_or_twilio_not_configured"}
     sids = {}
     if resumen_texto:
-        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "ðŸ§¾ *Nueva cotizaciÃ³n*\n\n" + resumen_texto, delay=0.0)
+        sids["admin_text"] = send_whatsapp_text(ADMIN_WA, "🧾 *Nueva cotización*\n\n" + resumen_texto, delay=0.0)
     if pdf_url:
-        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "ðŸ“„ PDF de la cotizaciÃ³n", pdf_url, delay=MEDIA_DELAY)
+        sids["admin_pdf"]  = send_whatsapp_media_only_pdf(ADMIN_WA, "📄 PDF de la cotización", pdf_url, delay=MEDIA_DELAY)
     if docx_url:
-        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"ðŸ–¹ DOCX: {docx_url}", delay=MEDIA_DELAY)
+        sids["admin_docx"] = send_whatsapp_text(ADMIN_WA, f"🖹 DOCX: {docx_url}", delay=MEDIA_DELAY)
     return sids
 
-def aplicar_factor_control_plagas(base, tipo, scope):
-    """
-    base: total calculado por tramo (m2 * precio_unitario o como lo defina tu 'precio_por_tramo')
-    tipo: 'desinsectacion' | 'desratizacion' | ''
-    scope: 'interior' | 'exterior' | 'ambas' | '1' | '2' | '3'
-    Retorna SOLO el total. (Si luego quieres desglose, te digo cómo guardarlo en el contexto del PDF.)
-    """
-    s = (scope or "").strip().lower()
-    s = {"1": "interior", "2": "exterior", "3": "ambas"}.get(s, s or "ambas")
-
-    # Interior o exterior: 100% del base (sin split)
-    if s == "interior":
-        sub_int = float(base)
-        sub_ext = 0.0
-    elif s == "exterior":
-        sub_int = 0.0
-        sub_ext = float(base)
-    else:
-        # Ambas: split 60/40 del MISMO base
-        # Nota: sub_int + sub_ext == base (0.6 + 0.4 = 1.0)
-        sub_int = float(base) * FACTOR_INTERIOR  # 0.6
-        sub_ext = float(base) * FACTOR_EXTERIOR  # 0.4
-
-    total = sub_int + sub_ext
-
-    # Log útil para verificar que sí está aplicando 0.6 / 0.4
-    logging.info(
-        f"[plagas] tipo={tipo} scope={s} base={base} "
-        f"sub_int={sub_int} sub_ext={sub_ext} total={total}"
-    )
-    return total
-
 # -----------------------------------------------------------------------------
-# NormalizaciÃ³n de payload externo y generate
+# Normalización de payload externo y generate
 # -----------------------------------------------------------------------------
 def normalize_payload(data: dict) -> dict:
     data = data or {}
 
-    # NUEVO: alcance (interior/exterior/ambas) desde distintas claves posibles
-    alcance = _safe(
-        data.get("alcance") or
-        data.get("scope") or
-        data.get("interior_exterior") or
-        data.get("area_plaga") or
-        data.get("zona")
-    )
-
     servicio  = _safe(data.get("servicioinicial") or data.get("servicio") or data.get("servicio_inicial"))
+    subarea   = _safe(data.get("subarea") or data.get("subservicio_area"))  # <- NUEVO: capturamos subárea del flujo
     cliente   = _safe(data.get("tipo_clientes")   or data.get("cliente")  or data.get("tipo_cliente") or "Residencial")
     m2_raw    = _safe(data.get("metro_2")         or data.get("m2")       or data.get("metros2"))
     direccion = _safe(data.get("lugar_D")         or data.get("direccion") or data.get("ubicacion"))
@@ -941,17 +611,17 @@ def normalize_payload(data: dict) -> dict:
     email     = _safe(data.get("correoelect")     or data.get("email"))
 
     profundidad    = _safe(data.get("profundidad"))
-    tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaÃ±o_piscina"))
+    tamano_piscina = _safe(data.get("tamano_piscina") or data.get("tamaño_piscina"))
     m3_explicit    = _safe(data.get("m3") or data.get("volumen") or data.get("volumen_m3"))
 
-    # cÃ¡maras:
+    # cámaras:
     tipo_camara     = _safe(data.get("tipo_camara"))
     cantidad_camara = _safe(data.get("cantidad_camara"))
     area_vigilar    = _safe(data.get("area_vigilar"))
 
     # m2 declarado
     try:
-        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("mÂ²","").replace(",",".").strip() or "0")
+        m2_num = float((m2_raw or "0").lower().replace("m2","").replace("m²","").replace(",",".").strip() or "0")
     except Exception:
         m2_num = 0.0
 
@@ -970,13 +640,11 @@ def normalize_payload(data: dict) -> dict:
         elif len(digits) == 9:        to_wa = f"whatsapp:+56{digits}"
         elif digits:                  to_wa = f"whatsapp:+{digits}"
 
-    servicio_label  = servicio or "DesinsectaciÃ³n"
-    servicio_precio = _canon_servicio_para_precios(servicio_label)
+    servicio_label  = servicio or "Desinsectación"
 
     info = {
         "fecha": datetime.date.today().strftime("%d-%m-%Y"),
         "servicio_label": servicio_label,
-        "servicio_precio": servicio_precio,
         "cliente": cliente,
         "m2": m2_num,
         "direccion": direccion,
@@ -987,12 +655,12 @@ def normalize_payload(data: dict) -> dict:
         "to_whatsapp": to_wa,
         "profundidad": profundidad,
         "tamano_piscina": tamano_piscina,
-        # cÃ¡maras:
+        # cámaras:
         "tipo_camara": tipo_camara,
         "cantidad_camara": cantidad_camara,
         "area_vigilar": area_vigilar,
-        "alcance": alcance,
-
+        # NUEVO:
+        "subarea": subarea,
     }
 
     try:
@@ -1021,13 +689,13 @@ def handle_generate():
     payload = _read_payload_any()
     info = normalize_payload(payload)
 
-    # Si es piscina detectada por estructura/texto, asegurar prefijo claro
+    # Prefijo piscinas si aplica
     if _dominio_from_info(info) == "piscinas" and "piscin" not in _norm(info.get("servicio_label","")):
-        info["servicio_label"] = f"Piscinas â€“ {info.get('servicio_label','')}"
+        info["servicio_label"] = f"Piscinas – {info.get('servicio_label','')}"
 
     faltantes = [k for k in ("servicio_label","cliente","direccion","contacto") if not info.get(k)]
     if faltantes:
-        return jsonify(ok=True, message="Campos mÃ­nimos faltantes; no se generan archivos",
+        return jsonify(ok=True, message="Campos mínimos faltantes; no se generan archivos",
                        missing=faltantes, received=payload), 200
 
     if (docx2pdf_convert is None) and (not _lo_bin()):
@@ -1065,24 +733,26 @@ def handle_generate():
         vol = _volumen_estimado_m3(info)
         if vol <= 0:
             vol = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
-            medidas_line = f"*Volumen (asumido):* {vol} mÂ³\n"
+            medidas_line = f"*Volumen (asumido):* {vol} m³\n"
         else:
-            medidas_line = f"*Volumen:* {vol} mÂ³\n"
+            medidas_line = f"*Volumen:* {vol} m³\n"
     elif dominio == "plagas":
-        medidas_line = f"*Superficie tratada:* {info.get('m2',0)} mÂ²\n"
+        medidas_line = f"*Superficie tratada:* {info.get('m2',0)} m²\n"
+        if info.get("subarea"):
+            detalle_line = f"*Área:* {info.get('subarea')}\n"
     elif dominio == "camaras":
         tot, tipo, qty, unit_ap, area = calcular_total_camaras(
             info.get("tipo_camara",""), info.get("area_vigilar",""), info.get("cantidad_camara","")
         )
-        detalle_line = f"*CÃ¡maras:* {info.get('tipo_camara','')} ({area}) x {qty} â€” unit: {_fmt_money_clp(unit_ap)}\n"
+        detalle_line = f"*Cámaras:* {info.get('tipo_camara','')} ({area}) x {qty} — unit: {_fmt_money_clp(unit_ap)}\n"
 
     partes = [
-        "âœ… *Nueva solicitud recibida*\n",
+        "✅ *Nueva solicitud recibida*\n",
         f"*Servicio:* {info['servicio_label']}\n",
         detalle_line,
         f"*Cliente:* {info['cliente']}\n",
         medidas_line,
-        f"*UbicaciÃ³n:* {info['direccion']}\n",
+        f"*Ubicación:* {info['direccion']}\n",
     ]
     if info.get("comuna"): partes.append(f"*Comuna:* {info['comuna']}\n")
     partes.extend([f"*Detalles:* {info.get('detalles','')}\n",
@@ -1091,23 +761,21 @@ def handle_generate():
 
     sids = {}
     if info.get("to_whatsapp") and SEND_PDF:
-        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "ðŸ“„ CotizaciÃ³n adjunta", pdf_url, MEDIA_DELAY)
+        sids["client_pdf"] = send_whatsapp_media_only_pdf(info["to_whatsapp"], "📄 Cotización adjunta", pdf_url, MEDIA_DELAY)
         if SEND_DOC:
-            send_whatsapp_text(info["to_whatsapp"], f"ðŸ–¹ DOCX: {docx_url}", delay=MEDIA_DELAY)
+            send_whatsapp_text(info["to_whatsapp"], f"🖹 DOCX: {docx_url}", delay=MEDIA_DELAY)
 
     if SEND_COPY_TO_ADMIN and ADMIN_WA:
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
     dbg = {
         "dominio": dominio,
-        "precio_key_piscina": (info.get("servicio_precio") if info.get("servicio_precio") in PRECIOS_PISCINA else _canon_piscina_key(info.get("servicio_label",""))),
         "m3_calc": _volumen_estimado_m3(info) or info.get("__m3_asumido_val__"),
         "tpl_used": tpl_used
     }
 
     return jsonify(ok=True, resumen=resumen, docx_url=docx_url, pdf_url=pdf_url,
                    to_wa=info.get("to_whatsapp",""), twilio=sids, dbg=dbg), 200
-
 # -----------------------------------------------------------------------------
 # Helpers para WhatsApp (entrada clave:valor)
 # -----------------------------------------------------------------------------
@@ -1126,30 +794,25 @@ def _parse_kv_text(msg: str) -> dict:
             "telefono": "telefono", "tel": "telefono", "fono": "fono", "phone": "phone",
             "correo": "email", "mail": "email", "e-mail": "email",
             "metros2": "m2", "metro_2": "m2",
-            "tamano_piscina": "tamano_piscina", "tamaÃ±o_piscina": "tamano_piscina",
+            "tamano_piscina": "tamano_piscina", "tamaño_piscina": "tamano_piscina",
             "servicioinicial": "servicio", "servicio_inicial": "servicio",
         }
         out[aliases.get(k, k)] = v
     return out
 
 def _flow_reset():
-    return {
-        "step": "servicio",
-        "info": {
-            "cliente": "Residencial"
-        }
-    }
+    return {"step": "servicio", "info": {"cliente": "Residencial"}}
 
 def _prompt_for(step: str) -> str:
     prompts = {
-        "servicio":  "Â¿QuÃ© servicio necesitas? (ej: *Piscinas - Plan Intermedio*, *DesratizaciÃ³n*, *CÃ¡maras - InalÃ¡mbricas*)",
-        "m2":        "Â¿CuÃ¡l es la *superficie en mÂ²*? (ej: 56)",
-        "profundidad":"Para piscinas, Â¿profundidad en *metros*? (ej: 1.4). Escribe *omitir* si no aplica.",
-        "direccion": "Â¿DirecciÃ³n exacta?",
-        "comuna":    "Â¿Comuna?",
-        "contacto":  "Â¿Nombre de contacto?",
-        "email":     "Â¿Email de contacto?",
-        "telefono":  "Â¿TelÃ©fono (con cÃ³digo paÃ­s, ej: +569xxxxxxxx)?",
+        "servicio":  "¿Qué servicio necesitas? (ej: *Piscinas - Plan Intermedio*, *Desratización*, *Cámaras - Inalámbricas*)",
+        "m2":        "¿Cuál es la *superficie en m²*? (ej: 56)",
+        "profundidad":"Para piscinas, ¿profundidad en *metros*? (ej: 1.4). Escribe *omitir* si no aplica.",
+        "direccion": "¿Dirección exacta?",
+        "comuna":    "¿Comuna?",
+        "contacto":  "¿Nombre de contacto?",
+        "email":     "¿Email de contacto?",
+        "telefono":  "¿Teléfono (con código país, ej: +569xxxxxxxx)?",
     }
     return prompts.get(step, "OK")
 
@@ -1262,12 +925,13 @@ def _map_rango_m2_to_number(rango: str) -> int:
     s = rango.lower()
     if "menos" in s or "<" in s or ("100" in s and "200" not in s): return 90
     if "100" in s and "200" in s: return 150
-    if "200" in s or "mÃ¡s" in s or ">" in s: return 250
+    if "200" in s or "más" in s or ">" in s: return 250
     return 0
 
 def _compose_payload_from_vars(vars_, from_wa: str):
     servicio = vars_.get("servicio", "")
     subservicio = vars_.get("subservicio", "")
+    subarea = vars_.get("subarea", "")  # <- NUEVO
     direccion = vars_.get("direccion", "")
     comuna = vars_.get("comuna", "")
     email = vars_.get("email", "")
@@ -1284,14 +948,11 @@ def _compose_payload_from_vars(vars_, from_wa: str):
 
     # Etiqueta visible del servicio
     if "piscin" in (servicio or "").lower():
-        servicio_label = f"Piscinas â€“ {subservicio or 'Servicio'}"
-    elif "cÃ¡mara" in (servicio or "").lower() or "camara" in (servicio or "").lower():
-        servicio_label = f"CÃ¡maras â€“ {subservicio or 'Servicio'}"
+        servicio_label = f"Piscinas – {subservicio or 'Servicio'}"
+    elif "cámara" in (servicio or "").lower() or "camara" in (servicio or "").lower():
+        servicio_label = f"Cámaras – {subservicio or 'Servicio'}"
     else:
         servicio_label = subservicio or "Control de Plagas"
-
-    # Detectar alcance (interior/exterior/ambas) desde las variables del flujo
-    scope_detected = _scope_from_any(vars_)  # usa tus helpers ya definidos
 
     payload = {
         "servicio": servicio_label,
@@ -1307,10 +968,9 @@ def _compose_payload_from_vars(vars_, from_wa: str):
         "tipo_camara": tipo_camara,
         "cantidad_camara": cantidad_camara,
         "area_vigilar": area_vigilar,
-
- # 🔴 NUEVO: pasar alcance al payload
-        "alcance": scope_detected,   # "interior" | "exterior" | "ambas" | ""
-        }
+        # NUEVO:
+        "subarea": subarea,
+    }
 
     if not payload.get("phone") and from_wa:
         payload["phone"] = from_wa.replace("whatsapp:", "")
@@ -1324,12 +984,11 @@ def _flow_finish_and_generate(resp, form, sess):
 
     info = normalize_payload(payload)
 
-    # Seguridad extra: prefijo â€œPiscinas â€“ â€¦â€ si aplica
     if _dominio_from_info(info) == "piscinas" and "piscin" not in _norm(info.get("servicio_label","")):
-        info["servicio_label"] = f"Piscinas â€“ {info.get('servicio_label','')}"
+        info["servicio_label"] = f"Piscinas – {info.get('servicio_label','')}"
 
     if (docx2pdf_convert is None) and (not _lo_bin()):
-        resp.message("âš ï¸ No pude generar PDF por un problema interno de conversiÃ³n. Intentaremos de nuevo pronto.")
+        resp.message("⚠️ No pude generar PDF por un problema interno de conversión. Intentaremos de nuevo pronto.")
         return
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1343,7 +1002,7 @@ def _flow_finish_and_generate(resp, form, sess):
         convertir_docx_a_pdf(docx_path, pdf_path)
     except Exception:
         app.logger.exception("gen-fail")
-        resp.message("âš ï¸ No pude generar la cotizaciÃ³n. Intenta nuevamente.")
+        resp.message("⚠️ No pude generar la cotización. Intenta nuevamente.")
         return
 
     docx_url, pdf_url = build_urls(docx_name, pdf_name)
@@ -1351,10 +1010,11 @@ def _flow_finish_and_generate(resp, form, sess):
     total = _fmt_money_clp(total_int)
 
     resumen = (
-        "âœ… CotizaciÃ³n lista\n"
-        f"â€¢ Servicio: {info.get('servicio_label','')}\n"
-        f"â€¢ Total: {total}\n"
-        f"â€¢ PDF: {pdf_url}"
+        "✅ Cotización lista\n"
+        f"• Servicio: {info.get('servicio_label','')}\n"
+        f"• Área: {info.get('subarea','')}\n"
+        f"• Total: {total}\n"
+        f"• PDF: {pdf_url}"
     )
     try:
         if twilio and TWILIO_ENABLED and from_wa:
@@ -1386,7 +1046,7 @@ def webhook():
     sess_id = _sess_key(form) or "anon"
     sess = _sess_get(sess_id) or {"node_id": _flow_start_id(), "vars": {}}
 
-    # Reinicio rÃ¡pido del flujo
+    # Reinicio rápido del flujo
     if body_lc in {"reiniciar", "reset", "start", "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"}:
         sess = {"node_id": _flow_start_id(), "vars": {}}
         _flow_emit_until_input(resp, sess)
@@ -1395,13 +1055,13 @@ def webhook():
 
     # Si no hay flujo cargado
     if not _FLOW or not sess.get("node_id"):
-        resp.message("ðŸ¤– Endpoint activo. Usa /generate (POST JSON) para cotizar por REST.")
+        resp.message("🤖 Endpoint activo. Usa /generate (POST JSON) para cotizar por REST.")
         return str(resp), 200, {"Content-Type": "application/xml"}
 
     current_id = sess.get("node_id")
     node = _FLOW.get(current_id)
 
-    # Nodo invÃ¡lido â†’ reinicia
+    # Nodo inválido → reinicia
     if not node:
         sess = {"node_id": _flow_start_id(), "vars": {}}
         _flow_emit_until_input(resp, sess)
@@ -1429,40 +1089,31 @@ def webhook():
         if save_as:
             vars_[save_as] = chosen.get("text", "")
 
-        # Mensajes â€œdesdeâ€ automÃ¡ticos (split 60/40 interior/exterior)
+        # -------- Mensajes “desde” (primer tramo del servicio + subárea) --------
         try:
             current_node_id = str(node.get("id") or "")
             sel_text = (chosen.get("text") or "").lower()
 
-            # Tipo de plaga
+            # Cuando el nodo es selección de tipo de plaga (usa tus IDs actuales)
             if current_node_id == "1748910215188":
                 subserv_label = vars_.get("subservicio", "")
-                serv_key = _canon_servicio_para_precios(subserv_label)
-                mk = precios_desde_por_servicio(serv_key)
-                if mk:
-                    resp.message(
-                        "Precios desde (referencia):\n"
-                        f"- Interior: {_fmt_money_clp(mk['interior'])}\n"
-                        f"- Exterior: {_fmt_money_clp(mk['exterior'])}\n"
-                        f"- Completo: {_fmt_money_clp(mk['completo'])}\n"
-                        "Normativa: DS 594 - SEREMI - Informe sanitario."
-                    )
+                # no mostramos aún, esperamos elección de subárea
 
-            # Interior/Exterior/Ambas
+            # Nodos donde eliges Interior/Exterior/Ambas
             if current_node_id in {"1748911338220", "1748912010712", "1748912322554"}:
-                subserv_label = vars_.get("subservicio", "")
-                serv_key = _canon_servicio_para_precios(subserv_label)
-                mk = precios_desde_por_servicio(serv_key)
-                if mk:
-                    if "interior" in sel_text:
-                        val = mk["interior"]; etq = "Interior"
-                    elif "exterior" in sel_text:
-                        val = mk["exterior"]; etq = "Exterior"
-                    else:
-                        val = mk["completo"]; etq = "Completo (interior + exterior)"
+                subserv_label = vars_.get("subservicio", "")  # Desratización / Desinsectación
+                area_sel = "interior y exterior"
+                if "interior" in sel_text: area_sel = "interior"
+                elif "exterior" in sel_text: area_sel = "exterior"
+                elif "ambas" in sel_text or "completo" in sel_text: area_sel = "interior y exterior"
+
+                clave = servicio_clave_plaga(subserv_label, area_sel)
+                val_desde = precio_desde_prim_tramo(clave)
+                if val_desde:
+                    etq = area_sel.title()
                     resp.message(
-                        f"{etq} desde {_fmt_money_clp(val)}.\n"
-                        "El valor final se ajusta segÃºn mÂ² y complejidad.\n"
+                        f"{etq} desde {_fmt_money_clp(val_desde)}.\n"
+                        "El valor final se ajusta según m² y complejidad.\n"
                         "Normativa: DS 594 - SEREMI - Informe sanitario."
                     )
         except Exception as e2:
@@ -1474,7 +1125,7 @@ def webhook():
     else:
         sess["node_id"] = node.get("nextId")
 
-    # -------------------- CONTINUACIÃ“N DEL FLUJO --------------------
+    # -------------------- CONTINUACIÓN DEL FLUJO --------------------
     _flow_emit_until_input(resp, sess)
 
     if not sess.get("node_id"):
@@ -1526,103 +1177,6 @@ def whoami():
 @app.route("/files/<path:filename>")
 def files(filename): return send_from_directory(FILES_DIR, filename, as_attachment=False)
 
-
-@app.route("/tramos", methods=["GET"])
-def tramos_html():
-    """
-    Tabla HTML de TRAMOS + PRECIOS por servicio.
-    ParÃ¡metros opcionales:
-      - servicio: desinsectacion | desratizacion | desinfeccion
-      - scope: interior | exterior | ambas (factor solo para desinsectaciÃ³n/desratizaciÃ³n)
-    """
-    servicio = (request.args.get("servicio") or "").strip().lower()
-    scope    = (request.args.get("scope") or "").strip().lower()
-
-    servicios_validos = list(PRECIOS.keys())
-    if not servicio or servicio not in PRECIOS:
-        servicio = "desinsectacion"
-
-    precios = PRECIOS[servicio]
-    filas = []
-    for i, (lo, hi) in enumerate(TRAMOS):
-        base = int(precios[i])
-        total = base
-        if servicio in ("desinsectacion","desratizacion") and scope in ("interior","exterior","ambas"):
-            total = int(aplicar_factor_control_plagas(base, servicio, scope))
-        filas.append((f"{lo}-{hi} mÂ²", base, (total if scope else None)))
-
-    # HTML simple y limpio
-    css = """
-    <style>
-      :root { --bg:#0b1320; --card:#111a2b; --txt:#e6edf3; --mut:#9fb3c8; --acc:#4ea1ff; }
-      body{background:var(--bg);font-family:system-ui,Segoe UI,Roboto,Arial;color:var(--txt);margin:0;padding:24px;}
-      .card{background:var(--card);border-radius:16px;padding:20px;max-width:980px;margin:0 auto;box-shadow:0 8px 24px rgba(0,0,0,.35);}
-      h1{margin:0 0 12px;font-size:22px}
-      .mut{color:var(--mut);margin:0 0 16px}
-      .controls{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
-      select, a.btn{background:#0e2239;border:1px solid #1e3350;color:#e6edf3;border-radius:10px;padding:8px 10px;font-size:14px;text-decoration:none}
-      a.btn:hover{border-color:var(--acc)}
-      table{width:100%;border-collapse:collapse;border-spacing:0}
-      th,td{padding:10px 12px;border-bottom:1px solid #21324a;text-align:left;font-size:14px}
-      th{color:#b8c7d9;font-weight:600}
-      td.money{font-variant-numeric: tabular-nums}
-      .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #234a73;background:#102844;color:#9fd0ff;font-size:12px}
-      .note{margin-top:10px;color:#9fb3c8;font-size:13px}
-    </style>
-    """
-
-    def fmt(n): 
-        try: return f"${int(n):,}".replace(",", ".")
-        except: return "$0"
-
-    opts_serv = "".join(
-        f'<option value="{s}" {"selected" if s==servicio else ""}>{s}</option>' for s in servicios_validos
-    )
-    scopes = ["", "interior", "exterior", "ambas"]
-    labels = {"":"(sin factor)","interior":"interior (0.6)","exterior":"exterior (0.4)","ambas":"ambas (1.0)"}
-    opts_scope = "".join(
-        f'<option value="{s}" {"selected" if s==scope else ""}>{labels[s]}</option>' for s in scopes
-    )
-
-    rows = []
-    for tramo, base, tot in filas:
-        rows.append(
-            f"<tr><td>{tramo}</td><td class='money'>{fmt(base)}</td><td class='money'>{fmt(tot) if tot is not None else 'â€”'}</td></tr>"
-        )
-    rows_html = "\n".join(rows)
-
-    tip = ""
-    if scope:
-        tip = f"<span class='pill'>scope: {labels.get(scope, scope)}</span>"
-    hdr = f"<h1>Tramos y precios â€” {servicio}</h1><p class='mut'>Tabla por tramo (mÂ²). {tip}</p>"
-
-    controls = f"""
-    <form class="controls" method="get" action="/tramos">
-      <label>Servicio&nbsp;
-        <select name="servicio">{opts_serv}</select>
-      </label>
-      <label>Alcance&nbsp;
-        <select name="scope">{opts_scope}</select>
-      </label>
-      <button class="btn" type="submit">Ver</button>
-      <a class="btn" href="/_debug/tabla_servicio?servicio={servicio}{('&scope='+scope) if scope else ''}" target="_blank">Ver JSON</a>
-    </form>
-    """
-
-    table = f"""
-    <table>
-      <thead><tr><th>Tramo</th><th>Precio base</th><th>Precio con factor</th></tr></thead>
-      <tbody>
-        {rows_html}
-      </tbody>
-    </table>
-    <div class="note">* El factor (interior/exterior/ambas) solo aplica a DesinsectaciÃ³n y DesratizaciÃ³n.</div>
-    """
-
-    html = f"<!doctype html><html><head><meta charset='utf-8'><title>Tramos</title>{css}</head><body><div class='card'>{hdr}{controls}{table}</div></body></html>"
-    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
-
-
 # -----------------------------------------------------------------------------
 # /generate (REST)
 # -----------------------------------------------------------------------------
@@ -1630,7 +1184,7 @@ def tramos_html():
 def generate(): return handle_generate()
 
 # -----------------------------------------------------------------------------
-# /upload Ãºnico (con token)
+# /upload único (con token)
 # -----------------------------------------------------------------------------
 UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "").strip()
 

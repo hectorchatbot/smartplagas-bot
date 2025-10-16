@@ -1,0 +1,26 @@
+﻿# Ignora artefactos locales/pesados
+out/
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+
+# Entornos
+.venv/
+venv/
+env/
+
+# Control de versiones
+.git/
+.gitignore
+
+# Documentos generados
+*.pdf
+*.xlsx
+*.zip
+
+# DOCX: excluye todos menos los de /templates
+*.docx
+!templates/*.docx
