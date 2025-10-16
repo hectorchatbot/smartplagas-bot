@@ -507,12 +507,12 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
         "clausula_seremi": "",
     }
 
-    if dom == "plagas":
-       try:
-           m2_val = float(info.get("m2", 0))
-           m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
-       except Exception:
-           m2_txt = str(info.get("m2", "")) or ""
+if dom == "plagas":
+    try:
+        m2_val = float(info.get("m2", 0))
+        m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
+    except Exception:
+        m2_txt = str(info.get("m2", "")) or ""
     ctx["m2"] = m2_txt
 
     # Línea de servicio + subárea (si existe)
@@ -524,44 +524,50 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     # Descripción
     ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
 
-    # ✅ Clausula SEREMI SOLO si es DESRATIZACIÓN
-    base_serv = _canon_base_plaga(info["servicio_label"])  # devuelve 'desratizacion' o 'desinsectacion'
+    # ✅ Clausula SEREMI SOLO para DESRATIZACIÓN
+    base_serv = _canon_base_plaga(info["servicio_label"])  # 'desratizacion' o 'desinsectacion'
     if base_serv == "desratizacion":
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
     else:
         ctx["clausula_seremi"] = ""
 
+elif dom == "piscinas":
+    try:
+        m2_val = float(info.get("m2") or 0)
+    except Exception:
+        m2_val = 0.0
 
-    elif dom == "piscinas":
-        try:
-            m2_val = float(info.get("m2") or 0)
-        except Exception:
-            m2_val = 0.0
-        label = info.get("servicio_label", "")
-        key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
-        m3_val = _volumen_estimado_m3(info)
-        if key.endswith("_m3") and (m3_val is None or m3_val <= 0):
-            m3_val = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
-            info["__m3_asumido__"] = True
-            info["__m3_asumido_val__"] = m3_val
+    label = info.get("servicio_label", "")
+    key = _canon_piscina_key(label) or "piscina_plan_intermedio_m3"
+    m3_val = _volumen_estimado_m3(info)
 
-        total_int = _precio_piscina_por_tramo(key, m3_val)
+    # Fallback para m3 si el servicio es por m3
+    if key.endswith("_m3") and (m3_val is None or m3_val <= 0):
+        m3_val = info.get("__m3_asumido_val__", PISCINA_MIN_M3_DEFAULT)
+        info["__m3_asumido__"] = True
+        info["__m3_asumido_val__"] = m3_val
 
-        ctx["precio"] = _fmt_money_clp(total_int)
-        ctx["total"]  = _fmt_money_clp(total_int)
-        ctx["linea_total"] = _fmt_money_clp(total_int)
+    total_int = _precio_piscina_por_tramo(key, m3_val)
 
-        m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
-        m2_txt = (str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else ""))
-        ctx["m2"] = m2_txt
-        ctx["m3"] = m3_txt
-        ctx["linea_servicio"] = info["servicio_label"]
-        ctx["linea_medida"] = m3_txt if m3_txt else (m2_txt if m2_txt else "1")
-        ctx["descripcion"] = info["servicio_label"]
-        ctx["clausula_seremi"] = ""
+    ctx["precio"] = _fmt_money_clp(total_int)
+    ctx["total"] = _fmt_money_clp(total_int)
+    ctx["linea_total"] = _fmt_money_clp(total_int)
 
-    else:
-        ctx["descripcion"] = info["servicio_label"]
+    m3_txt = str(int(m3_val)) if (m3_val and float(m3_val).is_integer()) else (str(m3_val) if m3_val else "")
+    m2_txt = str(int(m2_val)) if m2_val and float(m2_val).is_integer() else (str(m2_val) if m2_val else "")
+    ctx["m2"] = m2_txt
+    ctx["m3"] = m3_txt
+
+    ctx["linea_servicio"] = info["servicio_label"]
+    ctx["linea_medida"] = m3_txt if m3_txt else (m2_txt if m2_txt else "1")
+    ctx["descripcion"] = info["servicio_label"]
+    ctx["clausula_seremi"] = ""  # no aplica en piscinas
+
+else:
+    # Dominio "camaras" u otros
+    ctx["descripcion"] = info["servicio_label"]
+    ctx["clausula_seremi"] = ""
+
 
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
