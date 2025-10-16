@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -508,11 +508,11 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     }
 
     if dom == "plagas":
-    try:
-        m2_val = float(info.get("m2", 0))
-        m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
-    except Exception:
-        m2_txt = str(info.get("m2", "")) or ""
+       try:
+           m2_val = float(info.get("m2", 0))
+           m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
+       except Exception:
+           m2_txt = str(info.get("m2", "")) or ""
     ctx["m2"] = m2_txt
 
     # Línea de servicio + subárea (si existe)
