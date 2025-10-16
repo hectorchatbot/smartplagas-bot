@@ -508,16 +508,29 @@ def generar_docx_desde_plantilla(path: str, info: dict) -> str:
     }
 
     if dom == "plagas":
-        try:
-            m2_val = float(info.get("m2", 0))
-            m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
-        except Exception:
-            m2_txt = str(info.get("m2", "")) or ""
-        ctx["m2"] = m2_txt
-        ctx["linea_servicio"] = info["servicio_label"] + (f" — {info.get('subarea','')}" if info.get("subarea") else "")
-        ctx["linea_medida"] = m2_txt if m2_txt else "1"
-        ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
+    try:
+        m2_val = float(info.get("m2", 0))
+        m2_txt = str(int(m2_val)) if float(m2_val).is_integer() else str(m2_val)
+    except Exception:
+        m2_txt = str(info.get("m2", "")) or ""
+    ctx["m2"] = m2_txt
+
+    # Línea de servicio + subárea (si existe)
+    ctx["linea_servicio"] = info["servicio_label"] + (f" — {info.get('subarea','')}" if info.get("subarea") else "")
+
+    # Medida
+    ctx["linea_medida"] = m2_txt if m2_txt else "1"
+
+    # Descripción
+    ctx["descripcion"] = f"{info['servicio_label']}" + (f" — {m2_txt} m²" if m2_txt else "")
+
+    # ✅ Clausula SEREMI SOLO si es DESRATIZACIÓN
+    base_serv = _canon_base_plaga(info["servicio_label"])  # devuelve 'desratizacion' o 'desinsectacion'
+    if base_serv == "desratizacion":
         ctx["clausula_seremi"] = " — con instalación de estaciones cebaderas y entrega de informe sanitario conforme a exigencias SEREMI."
+    else:
+        ctx["clausula_seremi"] = ""
+
 
     elif dom == "piscinas":
         try:
