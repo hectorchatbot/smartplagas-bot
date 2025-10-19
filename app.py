@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os, re, time, unicodedata, datetime, json, shutil, subprocess, logging, uuid
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
@@ -97,6 +97,11 @@ TW_FROM  = os.getenv("TWILIO_WHATSAPP_FROM") or os.getenv("TWILIO_PHONE_NUMBER")
 ADMIN_WA = (os.getenv("ADMIN_WA") or os.getenv("ADMIN_WHATSAPP") or os.getenv("MY_PHONE_NUMBER") or "whatsapp:+56995300790").strip()
 TWILIO_ENABLED = (os.getenv("TWILIO_ENABLED", "true").lower() == "true")
 
+# === NUEVO: reenvío (reflejo) a números administradores ===
+# FORWARD_TO_NUMBERS debe ser números E.164 sin "whatsapp:" (ej: +56995300790, +56958XXXXXX)
+FWD_LIST = [n.strip() for n in (os.getenv("FORWARD_TO_NUMBERS", "") or "").split(",") if n.strip()]
+FWD_ON   = os.getenv("FORWARD_ENABLE", "1") not in ("0", "false", "False", "")
+
 BASE_URL = (os.getenv("BASE_URL") or os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
@@ -120,6 +125,51 @@ MEDIA_DELAY = float(os.getenv("MEDIA_DELAY_SECONDS", "1.0"))
 SEND_COPY_TO_ADMIN = (os.getenv("SEND_COPY_TO_ADMIN", "true").lower() == "true")
 
 twilio = Client(TW_SID, TW_TOKEN) if (TW_SID and TW_TOKEN) else None
+
+# ======== FUNCIONES NUEVAS: REFLEJO DE MENSAJES =========
+def _safe_text(s: str, maxlen: int = 1200) -> str:
+    try:
+        s = s or ""
+        return (s[:maxlen] + "…") if len(s) > maxlen else s
+    except Exception:
+        return ""
+
+def forward_incoming_to_owners(wa_from: str, body: str, media_items: list):
+    """
+    Envía copia del mensaje entrante (texto y/o medios) a cada número en FWD_LIST.
+    No interfiere con el flujo normal del bot.
+    """
+    if not (FWD_ON and twilio and TWILIO_ENABLED and TW_FROM and FWD_LIST):
+        return
+    header = f"📩 *Nuevo mensaje a Smart Plagas*\nDe: {wa_from}\n"
+    text = _safe_text(body)
+    caption = header + ("\n— — —\n" + text if text else "")
+
+    # 1) texto
+    try:
+        if text.strip():
+            for to in FWD_LIST:
+                to_wa = f"whatsapp:{to}" if not to.startswith("whatsapp:") else to
+                twilio.messages.create(from_=TW_FROM, to=to_wa, body=caption)
+        else:
+            for to in FWD_LIST:
+                to_wa = f"whatsapp:{to}" if not to.startswith("whatsapp:") else to
+                twilio.messages.create(from_=TW_FROM, to=to_wa, body=header)
+    except Exception as e:
+        logging.exception(f"[FORWARD:text] {e}")
+
+    # 2) medias
+    try:
+        for i, m in enumerate(media_items or [], start=1):
+            media_url = m.get("url")
+            ctype = m.get("content_type", "")
+            foot = f"{header}\n📎 Archivo {i} ({ctype})"
+            for to in FWD_LIST:
+                to_wa = f"whatsapp:{to}" if not to.startswith("whatsapp:") else to
+                twilio.messages.create(from_=TW_FROM, to=to_wa, body=foot, media_url=[media_url] if media_url else None)
+    except Exception as e:
+        logging.exception(f"[FORWARD:media] {e}")
+# ========================================================
 
 # -----------------------------------------------------------------------------
 # Precios y utilidades
@@ -795,7 +845,7 @@ def handle_generate():
         sids["admin"] = send_admin_copy(resumen, pdf_url, docx_url)
 
     dbg = {
-        "dominio": dominio,
+        "dominio": _dominio_from_info(info),
         "m3_calc": _volumen_estimado_m3(info) or info.get("__m3_asumido_val__"),
         "tpl_used": tpl_used
     }
@@ -1067,6 +1117,24 @@ def webhook():
     # Deduplicar
     if not _dedup_should_process(msg_sid):
         return str(MessagingResponse()), 200, {"Content-Type": "application/xml"}
+
+    # === Datos para reenvío (reflejo) ===
+    wa_from = form.get("From", "")
+    try:
+        num_media = int(form.get("NumMedia", "0"))
+    except Exception:
+        num_media = 0
+    media_items = []
+    for i in range(num_media):
+        media_items.append({
+            "url": form.get(f"MediaUrl{i}"),
+            "content_type": form.get(f"MediaContentType{i}", "")
+        })
+    # >>> Enviar copia a administradores (no bloqueante del flujo)
+    try:
+        forward_incoming_to_owners(wa_from=wa_from, body=body, media_items=media_items)
+    except Exception as e:
+        app.logger.exception(f"[FORWARD] no crítico: {e}")
 
     resp = MessagingResponse()
     sess_id = _sess_key(form) or "anon"
